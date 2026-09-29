@@ -1,21 +1,31 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TabCloser settings</title>
+  <link rel="icon" href="icons/tabcloser.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <main>
     <header class="page-header">
-      <h1>Tab<span>Closer</span></h1>
-      <p class="tagline">Browsing limits · adult-site blocking · protection for X</p>
+      <div class="brand">
+        <img src="icons/tabcloser.svg" alt="" width="40" height="40">
+        <div><span class="brand-name">TabCloser</span><p class="brand-caption">Your browsing protection</p></div>
+      </div>
+      <h1>Protection settings</h1>
+      <p class="tagline">Choose your boundaries for time, websites, and sensitive media.</p>
     </header>
+    <nav class="section-nav" aria-label="Settings sections">
+      <a href="#site-timers">Site timers</a><a href="#adult-sites">Adult websites</a><a href="#x-protection">X protection</a><a href="#about">About</a>
+    </nav>
 
     <div class="layout">
       <div class="panels-column">
-      <section class="panel panel-timers" aria-labelledby="rulesTitle">
-        <h2 id="rulesTitle"><span class="panel-icon">⏱</span> Site timers</h2>
+      <section id="site-timers" class="panel panel-timers" aria-labelledby="rulesTitle" tabindex="-1">
+        <h2 id="rulesTitle">Site timers</h2>
         <p class="panel-note">
           Sites listed here close automatically after the chosen amount of <em>active</em>
           tab time. Optionally, the site stays blocked for a chosen duration after the close.
@@ -24,7 +34,7 @@
         <button id="addRule" class="primary">+ Add site</button>
       </section>
 
-      <section class="panel panel-adult" aria-labelledby="adultTitle">
+      <section id="adult-sites" class="panel panel-adult" aria-labelledby="adultTitle" tabindex="-1">
         <h2 id="adultTitle">Adult websites</h2>
         <p class="panel-note">Block known pornography websites and their subdomains using a bundled list. Matching happens on this device. This does not scan every website for adult content.</p>
         <label class="toggle"><input id="adultSitesEnabled" type="checkbox"> Block known adult websites</label>
@@ -43,8 +53,8 @@
         <p class="panel-note">List: <a href="https://github.com/blocklistproject/Lists" target="_blank" rel="noopener noreferrer">The Block List Project</a> (Unlicense). Included with extension updates; no browsing data is sent to the list provider. Mixed-content sites such as X use separate protection.</p>
       </section>
       </div>
-      <section class="panel panel-x x-protection" aria-labelledby="xProtectionTitle">
-        <h2 id="xProtectionTitle"><span class="panel-icon">🛡</span> X / Twitter protection</h2>
+      <section id="x-protection" class="panel panel-x x-protection" aria-labelledby="xProtectionTitle" tabindex="-1">
+        <h2 id="xProtectionTitle">X / Twitter protection</h2>
         <p class="panel-note">Hide media X labels as mature, or add the on-device classifier. Video frames take priority over thumbnails when checks succeed; unavailable video checks fall back to the thumbnail. Enabling the classifier also enables the label tier.</p>
 
         <div class="tier">
@@ -54,14 +64,14 @@
           <div class="lock-controls">
             <label for="xLabeledLockAmount">Lock for</label>
             <input id="xLabeledLockAmount" type="number" min="1" step="1" value="60">
-            <select id="xLabeledLockUnit">
+            <select id="xLabeledLockUnit" aria-label="X labels lock duration unit">
               <option value="60">minutes</option>
               <option value="3600">hours</option>
               <option value="86400">days</option>
             </select>
             <button id="lockXLabeled" type="button">Lock</button>
             <span class="lock-or">or until</span>
-            <input id="xLabeledLockDate" type="datetime-local">
+            <input id="xLabeledLockDate" type="datetime-local" aria-label="Lock X labels until date">
             <button id="lockXLabeledDate" type="button">Lock until date</button>
           </div>
           <p id="xLabeledStatus" class="lock-status"></p>
@@ -81,14 +91,14 @@
           <div class="lock-controls">
             <label for="xModelLockAmount">Lock for</label>
             <input id="xModelLockAmount" type="number" min="1" step="1" value="60">
-            <select id="xModelLockUnit">
+            <select id="xModelLockUnit" aria-label="Classifier lock duration unit">
               <option value="60">minutes</option>
               <option value="3600">hours</option>
               <option value="86400">days</option>
             </select>
             <button id="lockXModel" type="button">Lock</button>
             <span class="lock-or">or until</span>
-            <input id="xModelLockDate" type="datetime-local">
+            <input id="xModelLockDate" type="datetime-local" aria-label="Lock classifier until date">
             <button id="lockXModelDate" type="button">Lock until date</button>
           </div>
           <p id="xModelStatus" class="lock-status"></p>
@@ -135,6 +145,15 @@
     </div>
 
     <p id="saveStatus" class="save-status"></p>
+    <section id="about" class="about-panel" aria-labelledby="aboutTitle" tabindex="-1">
+      <div class="about-heading"><h2 id="aboutTitle">About TabCloser</h2><span id="extensionVersion"></span></div>
+      <p>One place for site timers, known adult-site blocking, and sensitive-media protection on X.</p>
+      <div class="about-grid">
+        <div><h3>On your device</h3><p>Classification and domain matching run locally. Rules, locks, manual hides, and reveal usage stay in this browser profile. TabCloser does not upload your browsing history or media for analysis.</p></div>
+        <div><h3>Browser access</h3><p>Website access lets TabCloser enforce your site rules and protect media on X. Locks protect settings inside TabCloser; the browser can still disable or remove the extension.</p></div>
+      </div>
+      <div class="about-links"><a href="https://github.com/PietroFilippo/TabCloser#readme" target="_blank" rel="noopener noreferrer">Usage &amp; project</a><a href="https://github.com/PietroFilippo/TabCloser/issues" target="_blank" rel="noopener noreferrer">Report an issue</a><a href="THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a></div>
+    </section>
   </main>
   <script src="common.js"></script>
   <script src="options.js"></script>

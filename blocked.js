@@ -3,7 +3,7 @@ const domain = params.get('domain') || '';
 const until = parseInt(params.get('until') || '0', 10);
 
 document.getElementById('domain').textContent = domain;
-document.title = `Blocked — ${domain}`;
+document.title = `${domain || 'Site'} blocked · TabCloser`;
 
 const $time = document.getElementById('time');
 const $countdown = document.querySelector('.countdown');
@@ -12,7 +12,8 @@ document.getElementById('settings').addEventListener('click', () => browser.runt
 
 async function renderAdultBlock() {
   const config = (await browser.runtime.sendMessage({ type: 'getState' })).adultSites || {};
-  document.querySelector('.badge').textContent = 'PROTECTED';
+  document.querySelector('.badge').textContent = 'Adult-site protection';
+  document.querySelector('h1').textContent = !config.enabled ? 'Protection is off' : config.error ? 'Navigation is paused' : 'This site is blocked';
   $countdown.textContent = config.error || (config.enabled ? 'Adult-site protection is on.' : 'Adult-site protection is off. You can navigate back manually.');
   document.querySelector('.note').textContent = config.lockUntil > Date.now()
     ? 'Settings locked until ' + new Date(config.lockUntil).toLocaleString() + '. The block stays on after the lock expires.'
@@ -22,6 +23,8 @@ async function renderAdultBlock() {
 function tick() {
   const remaining = Math.max(0, (until - Date.now()) / 1000);
   if (remaining <= 0) {
+    document.querySelector('h1').textContent = 'Your break is over';
+    document.querySelector('.note').textContent = 'The cooldown has finished. Your site timer will apply again when you return.';
     while ($countdown.firstChild) $countdown.removeChild($countdown.firstChild);
     const span = document.createElement('span');
     span.className = 'expired';

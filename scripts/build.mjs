@@ -10,7 +10,7 @@ const staticFiles = [
   'background.js', 'adult-sites.js',
   'blocked.css', 'blocked.html', 'blocked.js',
   'catholic-quotes.js',
-  'common.js',
+  'common.js', 'theme.css',
   'manifest.json',
   'options.css', 'options.html', 'options.js',
   'THIRD_PARTY_NOTICES.md',

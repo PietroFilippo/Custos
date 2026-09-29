@@ -2,7 +2,7 @@
 
 A Firefox / Zen browser add-on for browsing limits and content protection: timed site blocks, optional adult-site blocking, and local sensitive-media protection for X.
 
-Current development version: **0.4.0**. See [Project status](docs/PROJECT_STATUS.md) for completed work, validation limits, and next steps.
+Current development version: **0.4.1**. See [Project status](docs/PROJECT_STATUS.md) for completed work, validation limits, and next steps.
 
 Personal-use, Manifest V3. Requires Firefox 140+ (or Zen on a recent build).
 
@@ -38,6 +38,7 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 ## Usage
 
 - Click the TabCloser toolbar icon -> **Open settings** to add a site.
+- The protection overview shows the current X mode and tier locks, adult-site blocking (including list errors), and the number of enabled site timers. It displays your configuration; it is not a guarantee that every sensitive item is detected.
 - Each rule has: domain, close-after (minutes), block-after-close toggle + duration, enabled toggle.
 - The popup shows each site as counting, paused, or blocked. Blocked sites show a cooldown instead of a second, reset timer card. Long lists expand with **Show more**, and the settings button stays visible while scrolling.
 - Reset the timer or unblock early from the settings page (per-rule buttons).
@@ -48,6 +49,14 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 - Right-click a post or media on X and choose **TabCloser → hide this post’s text** or **hide this image / video**. Text gets a compact notice; artwork only replaces the selected media. Author details and post actions remain visible. Existing whole-post choices hide text and media individually, preserving their protection. Manual choices survive reloads and work with automatic protection off. Remove individual choices under **Manual hides** in settings, or through **Why hidden?**. Active X locks prevent removal.
 - Temporary reveals default **off**. Set a daily allowance in settings (for example, 30 seconds), then hold **Hold to reveal** inside **Why hidden?**. A post gets **three cumulative seconds per local calendar day**, shared across all its images and all tabs. Releasing the button/key, losing focus, navigating, or reaching the deadline hides it again. Videos remain paused and muted. Keyboard: focus the hold button and hold Space or Enter.
 - The background process reserves time before revealing and refunds unused time on a clean early release. Refreshes preserve usage; a crash or extension restart can consume the outstanding reservation. Local midnight replenishes the allowance; changing a setting never clears usage. The daily limit may decrease but cannot increase during either an active X lock or the independent **Lock allowance** period. Locking zero keeps reveals off. Locks cannot be shortened. Save feedback appears beside the allowance and clears after three seconds; exhausted reveals are disabled.
+
+## Settings and add-on details
+
+TabCloser keeps its name in 0.4.1, with a shield-and-clock icon and a shared charcoal/gold design across the popup, settings, and blocked page. Settings section links jump to site timers, adult websites, X protection, and About. The About section shows the installed version, explains local processing and browser access, and links to usage instructions, issues, and third-party notices.
+
+In Zen / Firefox, open `about:addons` → **Extensions** → **TabCloser** for its description, author, version, and project homepage. Use the extension's **Preferences** / **Options** action (the label and placement depend on the browser) to open the full settings tab. The surrounding add-on manager remains browser-owned.
+
+This is a presentation update: the extension ID `tabcloser@personal.local`, permissions, stored settings, locks, and classification policies remain unchanged. Source changes do not update a permanently installed XPI: use the temporary development install above to test 0.4.1, or install a newly signed release when available.
 
 ## Adult-site protection
 
@@ -70,6 +79,7 @@ The supplied false-positive logs reproduce the previous decision patterns in reg
 | File | Role |
 |------|------|
 | `manifest.json` | MV3 manifest, permissions, entry points |
+| `theme.css`, `icons/tabcloser.svg` | Shared presentation and scalable shield-and-clock icon |
 | `adult-sites.js`, `data/` | Local adult-domain matching and bundled list |
 | `common.js` | Shared helpers (domain matching, formatting) |
 | `background.js` | Focus tracking, auto-close, block enforcement |

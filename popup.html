@@ -3,16 +3,21 @@
 <head>
   <meta charset="utf-8">
   <title>TabCloser</title>
+  <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <header class="popup-header">
-    <h1>Tab<span>Closer</span></h1>
-    <span class="header-note">Site activity</span>
+  <header class="popup-header brand">
+    <img src="icons/tabcloser.svg" alt="" width="40" height="40">
+    <div><h1 class="brand-name">TabCloser</h1><p class="brand-caption">Your browsing protection</p></div>
   </header>
 
   <main class="scroll">
     <p id="error" class="error" role="status" hidden>Unable to refresh. Retrying…</p>
+    <section aria-labelledby="protectionTitle">
+      <h2 id="protectionTitle">Protection overview</h2>
+      <div id="protection" class="protection-overview"></div>
+    </section>
     <section>
       <h2><span id="currentDot" class="dot dot-muted"></span> Current site</h2>
       <div id="current"></div>
@@ -31,7 +36,7 @@
     </section>
   </main>
 
-  <button id="openOptions">⚙ Open settings</button>
+  <button id="openOptions" class="primary-action" type="button">Open settings <span aria-hidden="true">→</span></button>
   <script src="common.js"></script>
   <script src="popup.js"></script>
 </body>

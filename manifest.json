@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "TabCloser",
-  "version": "0.4.0",
-  "description": "Limit distracting sites, block known adult websites, and protect sensitive media on X locally.",
+  "version": "0.4.1",
+  "description": "Set browsing time limits, block known adult websites, and hide sensitive media on X with on-device protection.",
   "browser_specific_settings": {
     "gecko": {
       "id": "tabcloser@personal.local",
@@ -35,11 +35,11 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "icons": {
-    "16": "icons/icon-16.png",
-    "32": "icons/icon-32.png",
-    "48": "icons/icon-48.png",
-    "96": "icons/icon-96.png",
-    "128": "icons/icon-128.png"
+    "16": "icons/tabcloser.svg",
+    "32": "icons/tabcloser.svg",
+    "48": "icons/tabcloser.svg",
+    "96": "icons/tabcloser.svg",
+    "128": "icons/tabcloser.svg"
   },
   "background": {
     "scripts": [
@@ -55,11 +55,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "TabCloser",
+    "default_title": "TabCloser — browsing protection",
     "default_icon": {
-      "16": "icons/icon-16.png",
-      "32": "icons/icon-32.png",
-      "48": "icons/icon-48.png"
+      "16": "icons/tabcloser.svg",
+      "32": "icons/tabcloser.svg",
+      "48": "icons/tabcloser.svg"
     }
   },
   "options_ui": {
@@ -110,5 +110,7 @@
       ],
       "run_at": "document_start"
     }
-  ]
+  ],
+  "author": "PietroFilippo",
+  "homepage_url": "https://github.com/PietroFilippo/TabCloser#readme"
 }

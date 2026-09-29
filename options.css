@@ -1,24 +1,7 @@
-:root {
-  --bg: #161616;
-  --panel: #1e1e1e;
-  --panel-border: #333;
-  --card: #262626;
-  --card-border: #3a3a3a;
-  --text: #ececec;
-  --muted: #a3a3a3;
-  --green: #4a9c4a;
-  --green-deep: #2c5f2c;
-  --gold: #c9a45c;
-  --gold-dim: #8a6d35;
-  --amber: #ffb74d;
-  --danger: #f66;
-}
-
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background:
-    radial-gradient(1200px 400px at 20% -10%, rgba(44, 95, 44, 0.14), transparent 60%),
-    radial-gradient(1200px 400px at 85% -10%, rgba(201, 164, 92, 0.10), transparent 60%),
+    radial-gradient(900px 400px at 70% 0, rgba(217, 182, 111, 0.06), transparent 80%),
     var(--bg);
   color: var(--text);
   margin: 0;
@@ -26,44 +9,47 @@ body {
 }
 
 main {
-  max-width: 1120px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 28px 24px 40px;
+  padding: 36px 28px 48px;
 }
 
 /* Header */
-.page-header { margin-bottom: 22px; }
+.page-header { margin-bottom: 24px; }
+.page-header .brand { margin-bottom: 28px; }
 .page-header h1 {
-  font-size: 26px;
+  font-size: 30px;
   letter-spacing: -0.5px;
   margin: 0;
 }
-.page-header h1 span { color: var(--green); }
 .tagline {
   color: var(--muted);
-  font-size: 13px;
-  margin: 4px 0 0;
+  font-size: 14px;
+  margin: 8px 0 0;
+  line-height: 1.5;
 }
+.section-nav { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 24px; }
+.section-nav a { color: var(--text); font-size: 13px; text-decoration: none; padding: 9px 15px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 7px; }
+.section-nav a:hover { color: var(--gold); border-color: var(--gold-dim); }
+section[id] { scroll-margin-top: 20px; }
 
-/* Two columns: timers left, X protection right. The right panel is sticky so
-   a long rule list never pushes it out of view. */
+/* Keep DOM and visual order aligned, including at narrow widths. */
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
-.panel-x { position: sticky; top: 16px; }
 @media (max-width: 940px) {
   .layout { grid-template-columns: 1fr; }
-  .panel-x { position: static; }
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 10px;
-  padding: 18px;
+  padding: 22px;
+  min-width: 0;
 }
 .panel h2 {
   align-items: center;
@@ -73,7 +59,6 @@ main {
   margin: 0 0 6px;
   padding-bottom: 10px;
 }
-.panel-icon { font-size: 18px; }
 .panel-timers h2 { border-bottom: 2px solid var(--green-deep); }
 .panel-x h2 { border-bottom: 2px solid var(--gold-dim); }
 .panel-note {
@@ -90,8 +75,9 @@ main {
   border-left: 3px solid var(--gold-dim);
   border-radius: 8px;
   margin-bottom: 12px;
-  padding: 12px 14px;
+  padding: 16px;
 }
+.tier:last-child { margin-bottom: 0; }
 .tier h3 {
   color: var(--gold);
   font-size: 11px;
@@ -121,6 +107,7 @@ main {
 }
 .rule-header input[type="text"] {
   flex: 1;
+  min-width: 0;
   padding: 7px 9px;
   background: var(--bg);
   color: var(--text);
@@ -129,7 +116,7 @@ main {
   font-size: 14px;
   font-family: ui-monospace, Consolas, monospace;
 }
-.rule-header input[type="text"]:focus { outline: none; border-color: var(--green); }
+.rule-header input[type="text"]:focus { border-color: var(--green); }
 .rule-header .del {
   align-items: center;
   background: transparent;
@@ -144,6 +131,7 @@ main {
   line-height: 1;
   padding: 0;
   width: 32px;
+  flex-shrink: 0;
 }
 .rule-header .del:hover { background: #3a1a1a; }
 .rule-header .del.confirming,
@@ -157,6 +145,7 @@ main {
 
 .field {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin: 6px 0;
@@ -240,11 +229,11 @@ button.primary:hover { background: #3c7f3c; }
   margin-top: 14px;
   min-height: 18px;
 }
-.empty-list { color: #777; font-size: 13px; font-style: italic; padding: 8px 0; }
+.empty-list { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
 .lock-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); }
 .lock-controls input { width: 72px; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid #444; border-radius: 6px; }
-.lock-controls input[type="datetime-local"] { width: auto; color-scheme: dark; }
+.lock-controls input[type="datetime-local"] { width: auto; max-width: 100%; color-scheme: dark; }
 .lock-controls select { padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid #444; border-radius: 6px; }
 .lock-controls input:disabled, .lock-controls select:disabled { opacity: 0.45; }
 .lock-controls button { padding: 5px 10px; background: #2f2b22; color: var(--gold); border: 1px solid var(--gold-dim); border-radius: 6px; cursor: pointer; }
@@ -258,8 +247,9 @@ button.primary:hover { background: #3c7f3c; }
 
 .sensitivity-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 8px 14px;
   font-size: 13px;
   color: #ddd;
   margin: 8px 0 2px 24px;
@@ -353,3 +343,20 @@ button.primary:hover { background: #3c7f3c; }
 .inline-feedback { color: var(--green); font-size: 13px; margin: 6px 0; }
 .inline-feedback:empty { display: none; }
 .inline-feedback.feedback-error { color: var(--danger); }
+.about-panel { margin-top: 28px; padding: 24px 0 0; border-top: 1px solid var(--panel-border); color: var(--muted); font-size: 13px; line-height: 1.65; }
+.about-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.about-heading h2 { margin: 0; color: var(--text); font-size: 18px; }
+#extensionVersion { font-size: 12px; }
+.about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.about-grid h3 { color: var(--text); font-size: 13px; margin: 10px 0 0; }
+.about-grid p { margin: 5px 0 16px; }
+.about-links { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+@media (max-width: 540px) {
+  main { padding: 24px 14px 32px; }
+  .panel { padding: 16px; }
+  .tier, .rule { padding: 12px; }
+  .about-grid { grid-template-columns: 1fr; gap: 0; }
+  .sensitivity-row { margin-left: 0; }
+  .section-nav a { padding: 8px 12px; }
+  .tabcloser-toast { max-width: calc(100vw - 28px); width: max-content; }
+}

@@ -15,7 +15,7 @@ async function start(t, rules, blocks = {}) {
   w.setInterval = () => 0;
   w.setTimeout = callback => { const id = ++timerId; callbacks.set(id, callback); return id; };
   w.clearTimeout = id => callbacks.delete(id);
-  w.browser = { runtime: { sendMessage: async msg => msg.type === 'getState'
+  w.browser = { runtime: { getManifest: () => ({ version: '0.4.1' }), sendMessage: async msg => msg.type === 'getState'
     ? { rules: structuredClone(rules), accumSec: {}, blocks, xProtection: {} }
     : { ok: false, error: 'x.com already has a rule. Edit that rule instead.' } } };
   for (const file of ['common.js', 'options.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8'));

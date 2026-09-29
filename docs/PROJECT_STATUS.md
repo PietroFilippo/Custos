@@ -1,6 +1,6 @@
-# Project status — 22 September 2026
+# Project status — 29 September 2026
 
-## Current development milestone: 0.4.0
+## Current development milestone: 0.4.1
 
 TabCloser now covers three areas: browsing time limits, known adult websites, and sensitive content on X. The name and extension ID remain unchanged. The current build is for development testing; a newly signed release has not been published.
 
@@ -14,6 +14,7 @@ Completed in this return-to-project cycle:
 - Separate text and image/video context-menu actions. Text uses a compact notice. Legacy whole-post choices still cover their text and media, with no article-wide artwork over author details or actions.
 - Optional adult-site blocking and a separate persistent lock, with a pinned, compressed local list of 936,977 domains, upstream attribution/license, a reproducible update script, and public-suffix validation. It blocks matching existing tabs, new HTTP(S) navigation, and frames. Expiry unlocks configuration without switching protection off.
 - Lenient video checks now require two strong full-frame signals. Balanced/Strict, X labels, image thresholds, and failed-video thumbnail fallback retain their prior policy.
+- Presentation refresh with the **TabCloser** name retained by user choice: scalable shield-and-clock icon, shared charcoal/gold styling, a popup overview of all three protection areas and their locks, settings section navigation and About details, and a calmer blocked page. The add-on manager gets a clearer description, author, and project homepage through manifest metadata. The existing full-tab settings route, extension ID, permissions, storage, and protection policies are preserved.
 
 ## Video false-positive investigation
 
@@ -33,9 +34,9 @@ Regression tests replay these score patterns through the real coordinator. Unobs
 
 ## Validation and limits
 
-- 141 automated tests pass, covering existing timers, ledger accounting/concurrency, persistent locks, adult host matching and list integrity, manual text/media behavior, popup/settings feedback, and classifier coordination.
-- Build and packaging pass; Firefox extension lint reports zero errors, warnings, or notices. The unsigned development package is `artifacts/tabcloser-0.4.0.zip` (ignored by Git).
-- Settings are visually checked using the real HTML/CSS/JS with isolated browser API fixtures. That does not substitute for a live Zen extension smoke test.
+- 144 automated tests pass, covering existing timers, ledger accounting/concurrency, persistent locks, adult host matching and list integrity, manual text/media behavior, popup/settings feedback, and classifier coordination. The new overview cases cover partial X locks, lock expiry, list failures, and enabled timer counts including duplicate/blocked domains.
+- Build and packaging pass; Firefox extension lint reports zero errors, warnings, or notices. The unsigned development package is `artifacts/tabcloser-0.4.1.zip` (ignored by Git).
+- The refreshed settings, popup, and block page are visually checked with real HTML/CSS/JS and isolated browser API fixtures, including narrow settings, section navigation, and the expanded ten-site popup with its pinned settings button. This does not substitute for a live Zen extension smoke test. The inspected Zen profile has a permanent installation and no temporary add-on to reload; its installed package was not replaced during this UI refresh.
 - Private corpus qualification, live rechecks of the five video posts, and signed-XPI release testing remain open. The provided logs do not contain original video pixels or later samples.
 - No domains or media are sent to a classification/list service. Media pixels/scores stay transient; manual choices, locks, and reveal usage stay in local extension storage. Only the maintainer update command downloads the upstream list.
 - The domain list cannot identify every adult page or newly created domain. It deliberately excludes broad mixed-content platforms and public suffixes. The settings lock does not prevent browser-level add-on disabling/removal or a user editing their own profile.
@@ -44,5 +45,5 @@ Regression tests replay these score patterns through the real coordinator. Unobs
 
 1. Re-test these five videos in the verified X account, collect known mature videos alongside safe videos, and measure both missed content and false positives before further threshold changes. Use the new preset-bearing logs. Keep private media out of Git.
 2. Add profile-picture and banner protection as separate opt-in controls with small-image tests. These surfaces remain outside current automatic/manual media discovery.
-3. Choose a broader browsing-protection name, then update the icon, toolbar overview, settings copy, and `about:addons` presentation together. Preserve `tabcloser@personal.local` so an update keeps its existing storage and locks. No name or trademark availability has been checked.
-4. Complete the release checklist, including multiple-site Zen testing and source-package review, before signing/publishing 0.4.0.
+3. Smoke-test 0.4.1 in Zen, including the new toolbar overview and `about:addons` icon, metadata, and settings route. A name change is deferred; the user chose to retain TabCloser.
+4. Complete the release checklist, including multiple-site Zen testing and source-package review, before signing/publishing 0.4.1.

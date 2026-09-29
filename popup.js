@@ -104,6 +104,40 @@ function updateOverflow(button, count, expanded) {
   button.textContent = expanded ? 'Show fewer' : `Show ${count - MAX_ROWS} more`;
 }
 
+function renderProtection(s, enabled, now) {
+  const labeled = s.xProtection?.labeled || {};
+  const model = s.xProtection?.model || {};
+  const adult = s.adultSites || {};
+  const modelOn = model.enabled === true;
+  const labelsOn = labeled.enabled === true;
+  const locks = [];
+  if (labelsOn && labeled.lockUntil > now) locks.push('Labels locked');
+  if (modelOn && model.lockUntil > now) locks.push('Classifier locked');
+  const preset = ['lenient', 'balanced', 'strict'].includes(model.sensitivity) ? model.sensitivity : 'balanced';
+  const xDetail = modelOn ? `${labelsOn ? 'X labels + ' : ''}${preset} classifier` : labelsOn ? 'X labels only' : 'Automatic media protection off';
+  const lockedRules = enabled.filter(r => r.disableLockedUntil > now).length;
+  const summaries = [
+    { id: 'xOverview', name: 'X protection', value: modelOn || labelsOn ? 'On' : 'Off',
+      tone: modelOn || labelsOn ? 'on' : 'off', detail: xDetail + (locks.length ? ' · ' + locks.join(' · ') : '') },
+    { id: 'adultOverview', name: 'Adult websites', value: adult.error && adult.enabled ? 'Check settings' : adult.enabled ? 'On' : 'Off',
+      tone: adult.error && adult.enabled ? 'attention' : adult.enabled ? 'on' : 'off',
+      detail: adult.enabled ? adult.error ? 'Domain list unavailable · navigation held' : 'Known-domain blocking' + (adult.lockUntil > now ? ' · Locked' : '') : 'Known-domain blocking off' },
+    { id: 'timersOverview', name: 'Site timers', value: `${enabled.length} enabled`, tone: enabled.length ? 'on' : 'off',
+      detail: enabled.length ? 'Count only active tab time' + (lockedRules ? ` · ${lockedRules} locked` : '') : 'Add a site in settings to start' },
+  ];
+  // Only display configuration here. Changes, including locked settings, use
+  // the existing settings page and background enforcement.
+  document.getElementById('protection').replaceChildren(...summaries.map(item =>
+    el('div', { id: item.id, class: 'protection-item' }, [
+      el('div', { class: 'protection-heading' }, [
+        el('span', { class: 'protection-name' }, item.name),
+        el('span', { class: `protection-value ${item.tone}` }, item.value),
+      ]),
+      el('p', { class: 'protection-detail' }, item.detail),
+    ])
+  ));
+}
+
 function renderState(s, page) {
   const host = page.host;
   const now = Date.now();
@@ -113,6 +147,7 @@ function renderState(s, page) {
     const key = normalizeRuleDomain(r.domain);
     return [key, ruleForHost(s.rules, key)];
   })).values()];
+  renderProtection(s, enabled, now);
   const currentBlock = activeBlockForHost(s.blocks, host, now);
   // A child-domain cooldown need not block its parent's other hosts. Keep
   // that parent's independent timer in the tracked list.

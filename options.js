@@ -1,4 +1,5 @@
 const $rules = document.getElementById('rules');
+document.getElementById('extensionVersion').textContent = `Version ${browser.runtime.getManifest().version}`;
 const $save = document.getElementById('saveStatus');
 const $add = document.getElementById('addRule');
 const $xLabeled = document.getElementById('xLabeledEnabled');

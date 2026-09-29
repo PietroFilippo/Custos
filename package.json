@@ -1,8 +1,8 @@
 {
   "name": "tabcloser",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
-  "description": "Firefox and Zen extension with local X/Twitter mature-media protection.",
+  "description": "Firefox and Zen extension for site timers, adult-site blocking, and local sensitive-media protection on X.",
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build.mjs",

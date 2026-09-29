@@ -7,11 +7,11 @@ const { JSDOM } = require('jsdom');
 const root = path.resolve(__dirname, '..');
 const now = 100000;
 const rule = (domain, extra = {}) => ({ domain, id: domain, enabled: true, closeAfterSec: 180, ...extra });
-async function start(t, { rules = [], blocks = {}, accumSec = {}, focus = {}, adultSites = {}, url = 'https://untracked.test' } = {}) {
+async function start(t, { rules = [], blocks = {}, accumSec = {}, focus = {}, adultSites = {}, xProtection = {}, url = 'https://untracked.test' } = {}) {
   const dom = new JSDOM(fs.readFileSync(path.join(root, 'popup.html'), 'utf8'), { runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const w = dom.window;
-  const data = { rules, blocks, accumSec, focus, adultSites };
+  const data = { rules, blocks, accumSec, focus, adultSites, xProtection };
   let refresh;
   w.Date.now = () => now;
   w.setInterval = callback => { refresh = callback; };
@@ -126,4 +126,52 @@ test('an expired cooldown becomes a paused timer and parent blocks also cover ch
   await h.refresh();
   assert.equal(h.document.querySelectorAll('#active .row').length, 2);
   assert.equal(h.document.querySelectorAll('#blocks .row').length, 0);
+});
+
+test('overview distinguishes partial X locks and refreshes when a lock expires', async t => {
+  const h = await start(t, { xProtection: {
+    labeled: { enabled: true, lockUntil: now + 60000 },
+    model: { enabled: true, sensitivity: 'lenient', lockUntil: 0 },
+  } });
+  const overview = () => h.document.querySelector('#xOverview').textContent;
+  assert.match(overview(), /X labels \+ lenient classifier/);
+  assert.match(overview(), /Labels locked/);
+  assert.doesNotMatch(overview(), /Classifier locked/);
+  h.data.xProtection.labeled.lockUntil = now - 1;
+  h.data.xProtection.model.lockUntil = now + 60000;
+  await h.refresh();
+  assert.doesNotMatch(overview(), /Labels locked/);
+  assert.match(overview(), /Classifier locked/);
+  h.data.xProtection = {};
+  await h.refresh();
+  assert.match(overview(), /Off/);
+  assert.doesNotMatch(overview(), /locked/);
+});
+
+test('overview distinguishes adult list failures, unlocked protection, and disabled protection', async t => {
+  const h = await start(t, { adultSites: { enabled: true, lockUntil: now + 60000 } });
+  const overview = () => h.document.querySelector('#adultOverview').textContent;
+  assert.match(overview(), /On.*Locked/);
+  h.data.adultSites.lockUntil = now - 1;
+  await h.refresh();
+  assert.match(overview(), /On/);
+  assert.doesNotMatch(overview(), /Locked/);
+  h.data.adultSites.error = 'Broken bundled list';
+  await h.refresh();
+  assert.match(overview(), /Check settings.*navigation held/);
+  h.data.adultSites.enabled = false;
+  await h.refresh();
+  assert.match(overview(), /Off/);
+  assert.doesNotMatch(overview(), /Check settings|navigation held/);
+});
+
+test('overview counts enabled timer domains once including cooldowns, and excludes disabled or expired locks', async t => {
+  const h = await start(t, { rules: [
+    rule('x.com', { disableLockedUntil: now + 60000 }), rule('x.com'),
+    rule('example.com', { disableLockedUntil: now - 1 }), rule('disabled.test', { enabled: false, disableLockedUntil: now + 60000 }),
+  ], blocks: { 'x.com': { until: now + 60000 } } });
+  const overview = h.document.querySelector('#timersOverview');
+  assert.match(overview.textContent, /2 enabled/);
+  assert.match(overview.textContent, /1 locked/);
+  assert.equal(overview.querySelector('button, input'), null);
 });

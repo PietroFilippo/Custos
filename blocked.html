@@ -1,17 +1,24 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Blocked</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Site blocked · TabCloser</title>
+  <link rel="icon" href="icons/tabcloser.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="blocked.css">
 </head>
 <body>
   <main>
-    <div class="badge">BLOCKED</div>
-    <p class="domain" id="domain"></p>
-    <p class="countdown">Unblocks in <span id="time">--:--</span></p>
-    <p class="note">To unblock early, open <strong>TabCloser settings</strong> from the toolbar extensions menu.</p>
-    <button id="settings" type="button">Open settings</button>
+    <header class="brand"><img src="icons/tabcloser.svg" alt="" width="40" height="40"><span class="brand-name">TabCloser</span></header>
+    <div class="block-card">
+      <div class="badge">Site timer</div>
+      <h1>This site is blocked</h1>
+      <p class="domain" id="domain"></p>
+      <p class="countdown">Available in <span id="time">--:--</span></p>
+      <p class="note">Your browsing limit is taking a break for you. You can review the timer and its lock in settings.</p>
+      <button id="settings" class="primary-action" type="button">Open settings</button>
+    </div>
   </main>
   <script src="common.js"></script>
   <script src="blocked.js"></script>

@@ -1,4 +1,4 @@
-# TabCloser 0.4.0 release checklist
+# TabCloser 0.4.1 release checklist
 
 ## Automated gates
 
@@ -11,10 +11,13 @@
 ## Firefox and Zen QA
 
 - Check the popup with 0, 1, 5, and 10 tracked sites, mixed paused/blocked sites, and long domains. Verify Show more/fewer, keyboard focus, scrolling, and the pinned settings button.
+- Check the protection overview with X tiers off, labels only, and classifier enabled; verify partial tier locks and expired locks. Check adult protection off, on, locked, and list unavailable. Timer counts must exclude disabled/duplicate domains and include enabled timers currently in cooldown.
+- In `about:addons`, check the scalable icon, TabCloser name, description, author, version, project link, and Preferences/Options route. Check toolbar icon readability in light/dark browser themes. The settings About section must match the manifest version.
+- Check settings section links, keyboard focus, reduced motion, and narrow widths. Check the refreshed block page for a timer countdown, expired cooldown, adult-domain block, and list failure. No page may offer a lock bypass.
 - Open the popup on `blocked.html` and an internal browser page. The blocked domain should appear once with its cooldown; internal pages must never show an extension UUID as a site.
 - Switch between tracked sites/windows, reset an active timer, and let a timer expire. Only focused time should count; stale timeout/alarm notifications must not close a different site early.
 - Test parent/subdomain timer precedence, overlapping cooldowns, duplicate-domain validation, and locked-parent override prevention.
-- Test a clean install and upgrades from 0.2.0 and 0.3.0; rules, timers, blocks, X-protection state, and locks must survive.
+- Test a clean install and upgrades from 0.2.0, 0.3.0, and 0.4.0; rules, timers, blocks, X-protection state, and locks must survive. Keep the existing `tabcloser@personal.local` ID.
 - Test X Home, Search, TweetDetail, photo viewer, cards, single/multi-image tweets, GIFs, and videos.
 - Repeat known misses with VPN enabled and disabled.
 - Confirm X-labelled media blocks without waiting for local inference.

@@ -1,0 +1,33 @@
+:root {
+  color-scheme: dark;
+  --bg: #171a18;
+  --panel: #1e2220;
+  --panel-border: #363c37;
+  --card: #252a26;
+  --card-border: #40473f;
+  --text: #f0f0e9;
+  --muted: #b0b7ad;
+  --green: #8cba9b;
+  --green-deep: #304e3b;
+  --gold: #d9b66f;
+  --gold-dim: #867142;
+  --amber: #e9bd79;
+  --danger: #ff9c96;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+a { color: var(--gold); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand img { width: 40px; height: 40px; flex: 0 0 auto; }
+.brand-name { font-size: 20px; font-weight: 700; letter-spacing: -.5px; }
+.brand-caption { color: var(--muted); font-size: 12px; margin: 3px 0 0; }
+.primary-action { background: var(--gold); color: #20251f; border: 1px solid var(--gold); border-radius: 8px; padding: 10px 16px; font-weight: 650; }
+.primary-action:hover { background: #e6c784; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
