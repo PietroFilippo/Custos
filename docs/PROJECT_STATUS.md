@@ -1,8 +1,10 @@
-# Project status — 29 September 2026
+# Project status — 2 October 2026
 
 ## Current development milestone: 0.4.1
 
 TabCloser now covers three areas: browsing time limits, known adult websites, and sensitive content on X. The name and extension ID remain unchanged. The current build is for development testing; a newly signed release has not been published.
+
+Documentation audited against the 0.4.1 source on 2 October. The latest implementation and validation run remain those of 29 September; this documentation audit did not rerun the automated suite or complete the pending live/release checks.
 
 Completed in this return-to-project cycle:
 
@@ -37,7 +39,7 @@ Regression tests replay these score patterns through the real coordinator. Unobs
 - 144 automated tests pass, covering existing timers, ledger accounting/concurrency, persistent locks, adult host matching and list integrity, manual text/media behavior, popup/settings feedback, and classifier coordination. The new overview cases cover partial X locks, lock expiry, list failures, and enabled timer counts including duplicate/blocked domains.
 - Build and packaging pass; Firefox extension lint reports zero errors, warnings, or notices. The unsigned development package is `artifacts/tabcloser-0.4.1.zip` (ignored by Git).
 - The refreshed settings, popup, and block page are visually checked with real HTML/CSS/JS and isolated browser API fixtures, including narrow settings, section navigation, and the expanded ten-site popup with its pinned settings button. This does not substitute for a live Zen extension smoke test. The inspected Zen profile has a permanent installation and no temporary add-on to reload; its installed package was not replaced during this UI refresh.
-- Private corpus qualification, live rechecks of the five video posts, and signed-XPI release testing remain open. The provided logs do not contain original video pixels or later samples.
+- Private corpus qualification, live rechecks of the five video posts, and signed-XPI release testing remain open. The provided logs do not contain original video pixels or later samples. The current evaluator covers default Balanced image scoring only; its alternative-threshold search and successful exit are not proof that the configured operating point passes. Video policies and other presets still need separate qualification; see `RELEASE_CHECKLIST.md`.
 - No domains or media are sent to a classification/list service. Media pixels/scores stay transient; manual choices, locks, and reveal usage stay in local extension storage. Only the maintainer update command downloads the upstream list.
 - The domain list cannot identify every adult page or newly created domain. It deliberately excludes broad mixed-content platforms and public suffixes. The settings lock does not prevent browser-level add-on disabling/removal or a user editing their own profile.
 

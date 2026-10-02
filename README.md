@@ -32,7 +32,7 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 
 1. Open `about:debugging` in the browser.
 2. Click **This Firefox** (Zen exposes the same page).
-3. Run `npm install` and `npm run build` from this folder before loading the add-on.
+3. Run `npm ci` and `npm run build` from this folder before loading the add-on (Node 22 and npm 10 are the release-checklist baseline).
 4. **Load Temporary Add-on…** and select `manifest.json` from this folder.
 
 ## Usage
@@ -42,7 +42,7 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 - Each rule has: domain, close-after (minutes), block-after-close toggle + duration, enabled toggle.
 - The popup shows each site as counting, paused, or blocked. Blocked sites show a cooldown instead of a second, reset timer card. Long lists expand with **Show more**, and the settings button stays visible while scrolling.
 - Reset the timer or unblock early from the settings page (per-rule buttons).
-- Use "Lock rule" after saving an enabled site to protect its configuration for a chosen number of minutes.
+- Use "Lock rule" after saving an enabled site to protect its configuration for minutes, hours, days, or until a chosen date. Enable **Lock also prevents "Unblock now"** before locking if early unblocking should be unavailable too.
 - A new subdomain rule cannot override a locked parent timer. Existing duplicate rules from older versions remain editable; resolve duplicates before saving further rule changes.
 - Enable either X protection tier and use its lock to prevent disabling it until expiry. X labels protect immediately. The classifier checks images and samples videos; a successful video check takes priority over a noisy thumbnail. Unavailable video checks fall back to the thumbnail, while image-check errors stay covered and retry.
 - Click **Why hidden?** on a replacement to see the reason, checked media type, and available model scores. Scores are model signals, not reliable probabilities.
@@ -99,4 +99,4 @@ The supplied false-positive logs reproduce the previous decision patterns in reg
 - The classifier targets adult sexual content, nudity, pornography, sexualized imagery, and hentai. Other sensitive categories continue to depend on X metadata.
 - Safe media can still be incorrectly blocked. Optional reveals are temporary presentation overrides and never change a classifier verdict or add a safe exception.
 - Manual post/media identities and daily reveal usage are saved locally; image pixels and diagnostic scores are not persisted by the extension. Removing a manual hide does not override X labels or classifier results.
-- The private evaluation corpus stays outside Git; see `RELEASE_CHECKLIST.md` for qualification and signing gates.
+- The private evaluation corpus stays outside Git; see [the release checklist](RELEASE_CHECKLIST.md#private-corpus-evaluation) for evaluator usage, its image-only limits, and qualification/signing gates.

@@ -4,9 +4,17 @@
 
 1. Use Node 22 and npm 10, then run `npm ci`.
 2. Run `npm test`; all tests must pass.
-3. Run the private corpus evaluator (this remains a release qualification gate, not a claim that the current branch has met it). Known misses must be 100% protected, unsafe recall at least 98%, and clearly-safe release at least 90%.
+3. Run the private corpus evaluator as described below (this remains a release qualification gate, not a claim that the current branch has met it). The configured operating point must protect 100% of known misses, achieve unsafe recall of at least 98%, and release at least 90% of clearly safe samples. A recommended alternative threshold alone does not pass this gate.
 4. Run `npm run build` and `npm run lint:extension` with no errors.
 5. Run `npm run package`; inspect the archive and confirm it contains no corpus media, credentials, source maps, development tools, or remote code.
+
+## Private corpus evaluation
+
+Run `npm run evaluate:model -- --manifest <corpus-manifest.json> --corpus <private-directory>`. This corpus manifest is separate from the extension's root `manifest.json`. It contains a `samples` array; each entry has `id`, `file` (relative to the private directory), `expected`, and an optional `sha256`. Accepted labels are `safe`, `adult`, `hentai`, `borderline`, and `known-miss`; all except `safe` count toward unsafe recall. Include safe, unsafe, and known-miss samples to make all three gates meaningful. Keep the corpus and its identifying manifest outside Git.
+
+The current evaluator accepts PNG/JPEG images and reports `configured` metrics using the default Balanced image scoring. It also searches alternative thresholds and reports `recommended`. Exit code 2 means no searched threshold passed; exit code 0 does **not** prove the configured threshold passed, so inspect `configured` explicitly. It does not change extension settings or thresholds.
+
+This script does not evaluate video sampling/aggregation, live X labels or DOM behavior, or the complete Lenient/Strict presets. Qualify those separately with recorded account/preset context and live safe/mature cases before release. Passing image metrics alone cannot establish video accuracy.
 
 ## Firefox and Zen QA
 
@@ -19,7 +27,7 @@
 - Test parent/subdomain timer precedence, overlapping cooldowns, duplicate-domain validation, and locked-parent override prevention.
 - Test a clean install and upgrades from 0.2.0, 0.3.0, and 0.4.0; rules, timers, blocks, X-protection state, and locks must survive. Keep the existing `tabcloser@personal.local` ID.
 - Test X Home, Search, TweetDetail, photo viewer, cards, single/multi-image tweets, GIFs, and videos.
-- Repeat known misses with VPN enabled and disabled.
+- Repeat known misses in the verified X account used for current testing. Record the account state, active sensitivity preset, and diagnostic version. Compare VPN on/off only when investigating a reproducible regional or metadata difference; VPN state alone is not a substitute for testing a verified account.
 - Confirm X-labelled media blocks without waiting for local inference.
 - Confirm safe media remains hidden while pending and becomes visible only after a safe verdict.
 - Confirm X-labelled and model-flagged media remain protected. Image-check failures should stay covered and retry. Unavailable/incomplete video checks must retain a flagged thumbnail; absent/unreadable thumbnails alone do not protect a video.
