@@ -24,7 +24,7 @@ Personal-use, Manifest V3. Requires Firefox 140+ (or Zen on a recent build).
 
 ### Signed XPI (permanent)
 
-1. Download the latest signed `.xpi` from the [Releases page](https://github.com/PietroFilippo/TabCloser/releases/latest).
+1. Download the latest signed `.xpi` from the [Releases page](https://github.com/PietroFilippo/Custos/releases/latest).
 2. Drag the file into a Zen / Firefox window, or open it with `Ctrl+O`.
 3. Confirm the install prompt.
 
