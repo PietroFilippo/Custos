@@ -467,14 +467,15 @@ function applyQuoteFor(root) {
   text.insertAdjacentElement('afterend', block);
 }
 
-function restoreArticleText(article) {
-  if (!(article instanceof Element)) return;
-  const text = article.querySelector('[data-testid="tweetText"]');
-  if (text) {
+// Restores the quote-replaced text of one tweet layer (the post itself, or a
+// quoted card inside it), leaving other layers and manual text hides alone.
+function restoreLayerText(article, layer) {
+  for (const text of article.querySelectorAll('[data-testid="tweetText"][data-tabcloser-quoted]')) {
+    if (tweetLayerFor(text, article) !== layer) continue;
     delete text.dataset.tabcloserQuoted;
     if (!text.hasAttribute('data-tabcloser-manual-text')) text.classList.remove('tabcloser-hidden-text');
+    if (text.nextElementSibling?.classList.contains('tabcloser-quote')) text.nextElementSibling.remove();
   }
-  article.querySelectorAll('.tabcloser-quote').forEach(quote => quote.remove());
 }
 
 function restoreAllArticleText() {
@@ -513,6 +514,17 @@ function restoreRootPlayback(root) {
   for (const player of mediaPlayersWithin(root)) restoreMediaPlayback(player);
 }
 
+// Like blocking follows the post's own media: a censored quoted card must not
+// block liking the post that quotes it.
+function ownMediaProtected(article) {
+  return !!article && [...article.querySelectorAll('[data-tabcloser-media-state="protected"]')]
+    .some(root => tweetLayerFor(root, article) === article);
+}
+
+function updateLikeBlock(article) {
+  if (article instanceof Element) article.toggleAttribute('data-tabcloser-like-blocked', ownMediaProtected(article));
+}
+
 function setRootState(root, state, reason) {
   if (!root?.isConnected) return;
   if (globalThis.TabCloserXInteractions?.manuallyHidden(root)) {
@@ -529,13 +541,19 @@ function setRootState(root, state, reason) {
     untrackBlurSize(root);
     existing?.remove();
     clearOverlayHost(host);
-    // The protected element can live outside the article (media viewer), so a
-    // sibling release must also respect the tweet-level session verdict.
-    const articleTweetId = article ? statusIdFor(article) : null;
-    const tweetStillProtected = !!articleTweetId &&
-      (visuallyProtectedTweetIds.has(articleTweetId) || sensitiveTweetIds.has(articleTweetId));
-    if (article && !tweetStillProtected &&
-        !article.querySelector('[data-tabcloser-media-state="protected"]')) restoreArticleText(article);
+    // Text comes back per tweet layer: a released quoted card restores its own
+    // text without touching the quoting post. The protected element can live
+    // outside the article (media viewer), so a release must also respect the
+    // tweet-level session verdict.
+    if (article) {
+      const layer = tweetLayerFor(root, article);
+      const layerTweetId = statusIdFor(root);
+      const stillProtected = (!!layerTweetId &&
+        (visuallyProtectedTweetIds.has(layerTweetId) || sensitiveTweetIds.has(layerTweetId))) ||
+        [...article.querySelectorAll('[data-tabcloser-media-state="protected"]')].some(other => tweetLayerFor(other, article) === layer);
+      if (!stillProtected) restoreLayerText(article, layer);
+    }
+    updateLikeBlock(article);
     return;
   }
   activateOverlayHost(host);
@@ -587,6 +605,7 @@ function setRootState(root, state, reason) {
   if (!existing) host.appendChild(overlay);
   if (state === 'protected' && mature && reason !== 'manual') applyQuoteFor(root);
   for (const player of mediaPlayersWithin(root)) blockMediaPlayback(player);
+  updateLikeBlock(article);
   globalThis.TabCloserXInteractions?.decorate(root, state, reason);
 }
 
@@ -595,6 +614,7 @@ function clearAllStates() {
   restoreAllArticleText();
   document.querySelectorAll('.tabcloser-media-overlay').forEach(overlay => overlay.remove());
   document.querySelectorAll('.tabcloser-overlay-host').forEach(clearOverlayHost);
+  document.querySelectorAll('[data-tabcloser-like-blocked]').forEach(article => article.removeAttribute('data-tabcloser-like-blocked'));
   document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
     restoreRootPlayback(root);
     untrackBlurSize(root);
@@ -1066,7 +1086,9 @@ async function classifyRoot(root, fingerprint, token) {
     if (root.matches('video')) videos.unshift(root);
     if (!images.length && !videos.length) throw new Error('no classifiable media');
 
-    const isVideo = videos.length > 0 || images.some(image => /\/(?:amplify|ext_tw)_video_thumb\//.test(image.src));
+    // GIFs are videos too: timeline quote cards show only their tweet_video_thumb
+    // image, and a noisy thumbnail must be overrulable by the GIF's frames.
+    const isVideo = videos.length > 0 || images.some(image => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(image.src));
     let thumbnailVerdict = null;
     let videoUnavailableReason = '';
     const recordDecision = (result, source) => rootDecisions.set(root, {
@@ -1426,7 +1448,7 @@ function blockPendingOrProtectedActivation(event) {
   // Liking a censored post would endorse content the user never saw.
   if (settings.blockLike) {
     const likeButton = event.target.closest('[data-testid="like"]');
-    if (likeButton && likeButton.closest('article')?.querySelector('[data-tabcloser-media-state="protected"]')) {
+    if (likeButton && ownMediaProtected(likeButton.closest('article'))) {
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
@@ -1468,7 +1490,7 @@ document.addEventListener('keydown', event => {
     const active = document.activeElement;
     if (active instanceof Element &&
         !active.matches('input, textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]') &&
-        active.closest('article')?.querySelector('[data-tabcloser-media-state="protected"]')) {
+        ownMediaProtected(active.closest('article'))) {
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();

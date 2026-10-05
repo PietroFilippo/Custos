@@ -37,6 +37,14 @@ await Promise.all(staticFiles.map(file => cp(path.join(root, file), path.join(di
 await cp(path.join(root, 'data'), path.join(dist, 'data'), { recursive: true });
 await cp(path.join(root, 'icons'), path.join(dist, 'icons'), { recursive: true });
 await cp(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
+// WebAssembly fallback for the classifier when WebGL is unavailable. The
+// threaded build needs cross-origin isolation, which extension workers lack,
+// so only the plain and SIMD binaries ship.
+const wasmFiles = ['tfjs-backend-wasm.wasm', 'tfjs-backend-wasm-simd.wasm'];
+await mkdir(path.join(dist, 'wasm'), { recursive: true });
+for (const file of wasmFiles) {
+  await cp(path.join(root, 'node_modules', '@tensorflow', 'tfjs-backend-wasm', 'dist', file), path.join(dist, 'wasm', file));
+}
 
 // The replacement-art list is generated from whatever is in assets/sacred-art
 // so adding or removing paintings never requires a code change. Each entry
@@ -113,5 +121,6 @@ await cp(path.join(dist, 'classifier-runtime.js'), path.join(root, 'classifier-r
 await cp(path.join(dist, 'classifier-worker.js'), path.join(root, 'classifier-worker.js'));
 await cp(path.join(dist, 'sacred-art-list.js'), path.join(root, 'sacred-art-list.js'));
 await cp(path.join(dist, 'models'), path.join(root, 'models'), { recursive: true });
+await cp(path.join(dist, 'wasm'), path.join(root, 'wasm'), { recursive: true });
 await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 console.log('Built extension in ' + dist);

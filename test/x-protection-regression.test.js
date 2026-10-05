@@ -25,12 +25,16 @@ test('verdict roots override the fail-closed hiding rule', () => {
   assert.match(stylesheet, /:where\(:not\(\[data-tabcloser-media-state\]\)\) > \*/, 'hiding applies to direct children only');
 });
 
-test('inference runs in a worker with webgl acceleration and a cpu fallback', () => {
+test('inference runs in a worker: webgl first, then a local WebAssembly fallback, then cpu', () => {
   const worker = readFileSync(path.join(root, 'classifier-worker-entry.js'), 'utf8');
+  const build = readFileSync(path.join(root, 'scripts', 'build.mjs'), 'utf8');
   assert.match(classifier, /new Worker\(/);
   assert.doesNotMatch(classifier, /setBackend/);
-  assert.match(worker, /setBackend\('webgl'\)/);
-  assert.match(worker, /setBackend\('cpu'\)/);
+  const order = ["useBackend('webgl')", "useBackend('wasm')", "useBackend('cpu')"].map(step => worker.indexOf(step));
+  assert.ok(order.every(index => index >= 0) && order[0] < order[1] && order[1] < order[2], 'backends must be tried in speed order');
+  assert.match(worker, /if \(!\(await tf\.setBackend\(name\)\)\) throw/, 'a backend that fails to initialize must not be reported as active');
+  assert.match(worker, /setWasmPaths\(new URL\('wasm\/', self\.location\.href\)\.href\)/, 'WebAssembly binaries load from the extension, never remotely');
+  assert.match(build, /tfjs-backend-wasm-simd\.wasm/);
 });
 
 test('graphql response bytes stream through before metadata parsing', () => {
@@ -172,7 +176,7 @@ test('quote replacement and like blocking are opt-in and reversible', () => {
   assert.match(background, /blockLike: raw\.blockLike === true/);
   assert.match(coordinator, /settings\.replaceText/, 'quote swap must respect its toggle');
   assert.match(coordinator, /settings\.blockLike/, 'like blocking must respect its toggle');
-  assert.match(coordinator, /restoreArticleText\(article\)/, 'released media must restore the original text');
+  assert.match(coordinator, /restoreLayerText\(article, layer\)/, 'released media must restore the original text of its own layer');
   assert.match(coordinator, /closest\('\[data-testid="like"\]'\)/, 'only the like button is blocked, not unlike');
   assert.ok(JSON.stringify(quotes.match(/text:/g).length) > 10, 'quote collection present');
 });

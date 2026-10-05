@@ -1851,3 +1851,67 @@ test('link-preview images are classified and covered as their own cells, never t
     assert.equal(click.defaultPrevented, true, 'a covered preview cannot open its link');
   } finally { h.dom.window.close(); }
 });
+
+const quotedGifFixture = (outerMedia = '') => `
+  <article id="outer"><a href="/outer/status/700"><time>1h</time></a>
+    <div data-testid="tweetText">Outer text</div>${outerMedia}
+    <div role="link" id="quote-card">
+      <a href="/quoted/status/701"><time>Oct 1</time></a>
+      <div data-testid="tweetText">Quoted text</div>
+      <div id="gif-thumb" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/tweet_video_thumb/GABC.jpg"></div>
+    </div>
+    <button id="like" data-testid="like">Like</button>
+  </article>`;
+
+function quotedGifHarness(html, classify) {
+  return startCoordinator(html, {
+    url: 'https://x.com/home',
+    config: { labeled: { enabled: true }, model: { enabled: true, sensitivity: 'balanced' }, blockLike: true, replaceText: true },
+    prepare(window) {
+      window.TabCloserQuotes = [{ text: 'Test quote', author: 'Test Author' }];
+      const createElement = window.document.createElement.bind(window.document);
+      window.document.createElement = function createElementWithVideoProbe(tagName, options) {
+        const element = createElement(tagName, options);
+        if (String(tagName).toLowerCase() === 'video') configureFixtureVideo(window, element, 'https://video.twimg.com/tweet_video/GABC.mp4');
+        return element;
+      };
+    },
+    classify,
+  });
+}
+
+test('a quoted GIF thumbnail is a video thumbnail: its frames can release a false positive', async () => {
+  const h = await quotedGifHarness(quotedGifFixture(), message => message.kind === 'url'
+    ? { verdict: 'protect', reason: 'visual', adultScore: 0.83 }
+    : { verdict: 'safe', reason: 'visual', adultScore: 0.01 });
+  try {
+    const thumb = h.window.document.getElementById('gif-thumb');
+    assert.equal(thumb.dataset.tabcloserMediaState, 'protected', 'without a video source the thumbnail stays covered');
+    assert.equal(h.window.TabCloserXCoordinator.decisionFor(thumb).source, 'video thumbnail');
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: [], videoSourcesByTweetId: { 701: 'https://video.twimg.com/tweet_video/GABC.mp4' } } });
+    await flush(h.window, 24);
+    assert.equal(thumb.dataset.tabcloserMediaState, 'safe', 'safe GIF frames overrule the thumbnail, as in the detail view');
+    assert.ok(h.classificationMessages.some(message => message.kind === 'frame'));
+    assert.equal(h.window.document.querySelector('#quote-card [data-testid="tweetText"]').classList.contains('tabcloser-hidden-text'), false);
+  } finally { h.dom.window.close(); }
+});
+
+test('a censored quoted card never blocks liking the post that quotes it; the post\'s own media does', async () => {
+  const h = await quotedGifHarness(quotedGifFixture(), () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }));
+  try {
+    const outer = h.window.document.getElementById('outer');
+    assert.equal(h.window.document.getElementById('gif-thumb').dataset.tabcloserMediaState, 'protected');
+    assert.equal(outer.hasAttribute('data-tabcloser-like-blocked'), false);
+    const click = new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    h.window.document.getElementById('like').dispatchEvent(click);
+    assert.equal(click.defaultPrevented, false, 'liking the quoting post stays possible');
+  } finally { h.dom.window.close(); }
+  const own = await quotedGifHarness(quotedGifFixture('<a href="/outer/status/700/photo/1"><div id="own" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/own.jpg"></div></a>'),
+    () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }));
+  try {
+    assert.ok(own.window.document.getElementById('outer').hasAttribute('data-tabcloser-like-blocked'));
+    const click = new own.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    own.window.document.getElementById('like').dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, 'the post\'s own hidden media still blocks likes');
+  } finally { own.dom.window.close(); }
+});

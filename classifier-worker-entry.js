@@ -1,24 +1,38 @@
 // Runs the NSFW model inside a dedicated worker so inference never blocks the
 // background page event loop (which also services the X response filters).
 import * as tf from '@tensorflow/tfjs';
+import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import { load } from 'nsfwjs/core';
 import verdictConfig from './x-verdict.js';
 
 let modelPromise;
 let backendUsed = 'unknown';
 
+// GPU first. Without WebGL (blocklisted drivers, hardware acceleration off,
+// some virtual machines) WebAssembly classifies an image in about 70 ms where
+// plain JavaScript takes over a second. setBackend reports failure by
+// resolving false rather than throwing, so every step checks its result.
+async function useBackend(name) {
+  if (!(await tf.setBackend(name))) throw new Error(name + ' backend unavailable');
+  await tf.ready();
+  backendUsed = name;
+}
+
 async function pickBackend() {
   tf.enableProdMode();
   try {
     if (typeof OffscreenCanvas === 'undefined') throw new Error('OffscreenCanvas unavailable');
-    await tf.setBackend('webgl');
-    await tf.ready();
-    backendUsed = 'webgl';
-  } catch {
-    await tf.setBackend('cpu');
-    await tf.ready();
-    backendUsed = 'cpu';
-  }
+    await useBackend('webgl');
+    return;
+  } catch {}
+  try {
+    if (typeof WebAssembly === 'undefined') throw new Error('WebAssembly unavailable');
+    // The binaries ship next to this worker; nothing is fetched remotely.
+    setWasmPaths(new URL('wasm/', self.location.href).href);
+    await useBackend('wasm');
+    return;
+  } catch {}
+  await useBackend('cpu');
 }
 
 function getModel(modelUrl) {

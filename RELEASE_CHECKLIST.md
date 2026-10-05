@@ -52,6 +52,8 @@ This script does not evaluate video sampling/aggregation, live X labels or DOM b
 - Confirm an active X lock prevents increasing/enabling the reveal allowance but allows lowering it. Disabling/re-enabling never refills the allowance.
 - Confirm disabling unlocked protection restores pending/protected DOM and a lock prevents disabling.
 - Confirm scrolling and tab switching remain responsive with multiple visible media items.
+- With hardware acceleration turned off in Firefox settings, confirm the classifier still answers quickly (WebAssembly fallback) and `about:processes` shows no sustained CPU spike while scrolling X.
+- Open a timeline post that quotes a post with a GIF: the quote-card thumbnail and the opened post must reach the same verdict, liking the quoting post must stay possible when only the quoted media is hidden, released quoted text must come back, and the compact “?” button must fit small thumbnails.
 
 ## Signing and release
 

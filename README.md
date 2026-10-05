@@ -112,7 +112,7 @@ The supplied false-positive logs reproduce the previous decision patterns in reg
 - After editing source files, reload the add-on from `about:debugging` → Custos → **Reload**.
 - Re-run `npm run build` before reloading whenever classifier or protection source changes.
 - Timer cooldowns use navigation redirects. Adult-site blocking intercepts navigation before the network request proceeds; enabling it also redirects already-loaded matching tabs.
-- X media classification is entirely local. Media pixels and model scores are not uploaded or persisted.
+- X media classification is entirely local. Media pixels and model scores are not uploaded or persisted. The model runs in a background worker, never on X's page: on the GPU through WebGL when available (about 30 ms per image), otherwise through a bundled WebAssembly build (about 55 ms), and only as a last resort in plain JavaScript (about 1 s). Only media near the screen is checked, two items at a time, using small image variants and a 500-result cache.
 - The classifier targets adult sexual content, nudity, pornography, sexualized imagery, and hentai. Other sensitive categories continue to depend on X metadata.
 - Safe media can still be incorrectly blocked. Optional reveals are temporary presentation overrides and never change a classifier verdict or add a safe exception.
 - Manual post/media identities and daily reveal usage are saved locally; image pixels, diagnostic scores, and account flags are not persisted by the extension. Removing a manual hide does not override X labels or classifier results.

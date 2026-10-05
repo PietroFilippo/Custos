@@ -22,6 +22,14 @@ test('sacred-art assets and the generated list exist in the loadable extension r
   }
 });
 
+test('the WebAssembly classifier fallback ships in the loadable extension root', () => {
+  for (const file of ['tfjs-backend-wasm.wasm', 'tfjs-backend-wasm-simd.wasm']) {
+    const wasmPath = path.join(__dirname, '..', 'wasm', file);
+    assert.ok(fs.existsSync(wasmPath), 'wasm/' + file + ' is missing — run `npm run build`');
+    assert.ok(fs.statSync(wasmPath).size > 0, 'empty WebAssembly binary: ' + file);
+  }
+});
+
 test('classifier model assets exist in the loadable extension root', () => {
   const modelJsonPath = path.join(modelDir, 'model.json');
   assert.ok(fs.existsSync(modelJsonPath), 'models/mobilenet_v2_mid/model.json is missing — run `npm run build`');

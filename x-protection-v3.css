@@ -288,7 +288,7 @@
 .tabcloser-manual-text-notice { padding: 8px 10px !important; border-radius: 8px !important; background: var(--tabcloser-surface-raised) !important; border: 1px solid var(--tabcloser-line-soft) !important; }
 
 /* Like stays visibly unavailable on posts whose media is hidden. */
-html[data-tabcloser-block-like] article:has([data-tabcloser-media-state="protected"]) [data-testid="like"] {
+html[data-tabcloser-block-like] article[data-tabcloser-like-blocked] [data-testid="like"] {
   cursor: not-allowed !important;
   opacity: 0.45 !important;
 }
@@ -337,4 +337,18 @@ article[data-tabcloser-collapse-revealed] > .tabcloser-collapsed-reply {
 @keyframes tabcloser-peek-window {
   from { clip-path: inset(0); }
   to { clip-path: inset(50%); }
+}
+
+/* Small cells, such as quote-card thumbnails, cannot fit the full notice and
+   button: the notice keeps only its mark and "Why hidden?" becomes "?". The
+   overlay's own size decides, and both keep their accessible text. Kept last
+   and one class more specific so it wins over the regular notice and button. */
+.tabcloser-media-overlay {
+  container: tabcloser-cell / size;
+}
+@container tabcloser-cell (max-width: 200px) {
+  .tabcloser-media-overlay .tabcloser-overlay-label { font-size: 0 !important; gap: 0 !important; padding: 5px !important; }
+  .tabcloser-media-overlay .tabcloser-media-actions { top: 4px !important; right: 4px !important; }
+  .tabcloser-media-overlay .tabcloser-media-actions button { font-size: 0 !important; line-height: 1 !important; margin: 0 !important; padding: 5px 8px !important; }
+  .tabcloser-media-overlay .tabcloser-media-actions button::before { content: "?" !important; font: 700 12px/1 system-ui, sans-serif !important; }
 }

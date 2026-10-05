@@ -4,6 +4,7 @@ The production extension includes these locally bundled dependencies:
 
 - **NSFWJS 4.3.0** and its MobileNetV2Mid model assets — MIT License. Copyright Infinite Red, Inc. Source: <https://github.com/infinitered/nsfwjs>
 - **TensorFlow.js 4.22.0** — Apache License 2.0. Copyright The TensorFlow Authors. Source: <https://github.com/tensorflow/tfjs>
+- **TensorFlow.js WebAssembly backend 4.22.0** (`@tensorflow/tfjs-backend-wasm`, including its prebuilt `.wasm` binaries, which incorporate XNNPACK under the BSD 3-Clause License) — Apache License 2.0. Copyright The TensorFlow Authors. Source: <https://github.com/tensorflow/tfjs/tree/master/tfjs-backend-wasm>
 
 The complete corresponding license texts are available in each dependency's npm package and upstream repository. No dependency is loaded remotely at runtime.
 
