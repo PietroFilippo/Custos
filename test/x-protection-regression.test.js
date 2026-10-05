@@ -140,7 +140,7 @@ test('with sacred art on, protected media is covered by a deterministic painting
   assert.ok(manifest.web_accessible_resources.some(entry => entry.resources.includes('assets/sacred-art/*')),
     'paintings must be web-accessible on X pages');
   assert.ok(manifest.content_scripts[0].js.includes('sacred-art-list.js'), 'the generated art list must load before the coordinator');
-  assert.match(coordinator, /hashString\(sacredArtKeyFor\(root\)\)/, 'artwork choice must use a stable post/media identity');
+  assert.match(coordinator, /const key = sacredArtKeyFor\(root\);[\s\S]{0,900}hashString\(key\)/, 'artwork choice must use a stable post/media identity');
   assert.match(coordinator, /sacredArtByRoot\.get\(root\)/, 'a mounted media root must retain its painting through source churn');
   assert.match(coordinator, /state === 'protected' && mature && settings\.sacredArt \? sacredArtUrlFor\(root\) : null/,
     'only confirmed mature verdicts may show a painting, and only when sacred art is on');

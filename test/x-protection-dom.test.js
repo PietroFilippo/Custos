@@ -2029,3 +2029,45 @@ test('a manual text hide follows a post into a reused element', async () => {
     assert.ok(text.classList.contains('tabcloser-hidden-text'), 'X reused the element for the hidden post');
   } finally { h.dom.window.close(); }
 });
+
+const twoPosts = `
+  <article><a href="/a/status/501"><time>1h</time></a><a href="/a/status/501/photo/1"><div id="first" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/first.jpg"></div></a></article>
+  <article><a href="/b/status/502"><time>1h</time></a><a href="/b/status/502/photo/1"><div id="second" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/second.jpg"></div></a></article>`;
+const credited = [
+  { file: 'met-the-annunciation-1.jpg', aspect: 1, title: 'The Annunciation', artist: 'Botticelli', date: 'ca. 1490', museum: 'The Metropolitan Museum of Art', url: 'https://www.metmuseum.org/art/collection/search/1' },
+  { file: 'cma-the-nativity-2.jpg', aspect: 1, title: 'The Nativity', artist: 'Unknown artist', date: 'c. 1500', museum: 'The Cleveland Museum of Art', url: 'https://clevelandart.org/art/2' },
+];
+
+test('two posts on screen never share a painting, and a remounted post keeps its own', async () => {
+  const h = await startCoordinator(twoPosts, { sacredArt: true,
+    prepare(window) { window.TabCloserSacredArt = credited; },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }) });
+  try {
+    const document = h.window.document;
+    const art = id => document.getElementById(id).closest('a').querySelector('.tabcloser-media-overlay').dataset.tabcloserArt;
+    const first = art('first');
+    assert.ok(first && art('second'));
+    assert.notEqual(first, art('second'), 'visible posts get different paintings');
+    const article = document.getElementById('first').closest('article');
+    const clone = article.cloneNode(true);
+    clone.querySelectorAll('.tabcloser-media-overlay').forEach(node => node.remove());
+    clone.querySelectorAll('[data-tabcloser-media-state]').forEach(node => node.removeAttribute('data-tabcloser-media-state'));
+    article.replaceWith(clone);
+    await flush(h.window, 12);
+    assert.equal(art('first'), first, 'X remounting a post does not change its painting');
+  } finally { h.dom.window.close(); }
+});
+
+test('the painting viewer credits the work and links to its museum', async () => {
+  const h = await startCoordinator(controlFixture, { sacredArt: true,
+    prepare(window) { window.TabCloserSacredArt = [credited[0]]; },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }) });
+  try {
+    h.window.document.getElementById('controlled-image').closest('a').querySelector('.tabcloser-media-overlay')
+      .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    const caption = h.window.document.querySelector('.tabcloser-lightbox-caption');
+    assert.match(caption.textContent, /The Annunciation — Botticelli, ca\. 1490 · The Metropolitan Museum of Art/);
+    assert.equal(caption.querySelector('a').getAttribute('href'), 'https://www.metmuseum.org/art/collection/search/1');
+    assert.equal(h.window.document.querySelector('.tabcloser-lightbox img').alt, 'The Annunciation, Botticelli');
+  } finally { h.dom.window.close(); }
+});
