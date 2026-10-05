@@ -1936,3 +1936,96 @@ test('closing "Why hidden?" returns focus to its button without scrolling back t
     assert.equal(restore.options?.preventScroll, true, 'the page must not jump back to the post');
   } finally { h.dom.window.close(); }
 });
+
+test('a video is probed with the source matched to its own poster, not its post', async () => {
+  const tweetId = '777001';
+  const posterSource = 'https://video.twimg.com/amplify_video/2/vid/b.mp4';
+  const h = await directVideoHarness(tweetId, posterSource, message => message.kind === 'url'
+    ? { verdict: 'protect', reason: 'visual', adultScore: 0.83 }
+    : { verdict: 'safe', reason: 'visual', adultScore: 0.01 });
+  try {
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: [], videoSourcesByTweetId: {},
+      videoSourcesByPoster: { 'https://pbs.twimg.com/amplify_video_thumb/305555/img/poster.jpg': { url: posterSource, tweetId } } } });
+    await flush(h.window, 24);
+    const root = h.window.document.getElementById('scored-video-root');
+    assert.equal(root.dataset.tabcloserMediaState, 'safe', 'safe frames of its own video release it');
+    assert.ok(h.classificationMessages.some(message => message.kind === 'frame' && message.mediaKey.includes('/2/vid/b.mp4')));
+  } finally { h.dom.window.close(); }
+});
+
+test('labels-only mode protects a media-search tile when its label arrives late', async () => {
+  const h = await startCoordinator('<main><a id="tile" href="/a/status/123"><img src="https://pbs.twimg.com/media/tile.jpg"></a></main>', {
+    config: { labeled: { enabled: true }, model: { enabled: false } },
+  });
+  try {
+    const tile = h.window.document.getElementById('tile');
+    assert.equal(tile.dataset.tabcloserMediaState, undefined, 'unlabeled tiles stay untouched');
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: ['123'] } });
+    assert.equal(tile.dataset.tabcloserMediaState, 'protected');
+  } finally { h.dom.window.close(); }
+});
+
+test('a quote returns when X redraws only the hidden post\'s text', async () => {
+  const h = await startCoordinator(controlFixture, {
+    config: { labeled: { enabled: true }, model: { enabled: true }, replaceText: true },
+    prepare(window) { window.TabCloserQuotes = [{ text: 'Test quote', author: 'Test Author' }]; },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }),
+  });
+  try {
+    const document = h.window.document;
+    const oldText = document.querySelector('[data-testid="tweetText"]');
+    assert.equal(oldText.dataset.tabcloserQuoted, 'yes');
+    const fresh = document.createElement('div');
+    fresh.setAttribute('data-testid', 'tweetText');
+    fresh.textContent = 'Original text';
+    oldText.replaceWith(fresh);
+    await flush(h.window, 12);
+    assert.equal(fresh.dataset.tabcloserQuoted, 'yes', 'the redrawn text is hidden again');
+    assert.equal(document.querySelectorAll('.tabcloser-quote').length, 1, 'no duplicate or orphaned quote');
+  } finally { h.dom.window.close(); }
+});
+
+test('pending media removed before reaching the viewport is unregistered from the observer', async () => {
+  const unobserved = [];
+  const h = await startCoordinator(controlFixture, {
+    prepare(window) {
+      window.IntersectionObserver = class { observe() {} unobserve(target) { unobserved.push(target); } disconnect() {} };
+    },
+  });
+  try {
+    const root = h.window.document.getElementById('controlled-image');
+    assert.equal(root.dataset.tabcloserMediaState, 'pending');
+    root.closest('article').remove();
+    h.window.document.body.appendChild(h.window.document.createElement('div'));
+    await flush(h.window, 6);
+    assert.ok(unobserved.includes(root));
+  } finally { h.dom.window.close(); }
+});
+
+test('the painting viewer is a labelled dialog with a focused Close button', async () => {
+  const h = await startCoordinator(controlFixture, { sacredArt: true, classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }) });
+  try {
+    const root = h.window.document.getElementById('controlled-image');
+    root.closest('a').querySelector('.tabcloser-media-overlay').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    const viewer = h.window.document.querySelector('.tabcloser-lightbox');
+    assert.equal(viewer.getAttribute('role'), 'dialog');
+    assert.ok(viewer.getAttribute('aria-label'));
+    const close = viewer.querySelector('.tabcloser-lightbox-close');
+    assert.equal(h.window.document.activeElement, close);
+    close.click();
+    assert.equal(h.window.document.querySelector('.tabcloser-lightbox'), null);
+  } finally { h.dom.window.close(); }
+});
+
+test('a manual text hide follows a post into a reused element', async () => {
+  const h = await startCoordinator(controlFixture, { interactions: true,
+    config: { labeled: { enabled: false }, model: { enabled: false } },
+    controlMessage: () => ({ ok: true, posts: [], texts: ['999'], media: [], revealDailySec: 0 }) });
+  try {
+    const text = h.window.document.querySelector('[data-testid="tweetText"]');
+    assert.equal(text.classList.contains('tabcloser-hidden-text'), false);
+    for (const link of h.window.document.querySelectorAll('a[href*="/status/123"]')) link.setAttribute('href', link.getAttribute('href').replace('123', '999'));
+    await new Promise(resolve => h.window.setTimeout(resolve, 120));
+    assert.ok(text.classList.contains('tabcloser-hidden-text'), 'X reused the element for the hidden post');
+  } finally { h.dom.window.close(); }
+});

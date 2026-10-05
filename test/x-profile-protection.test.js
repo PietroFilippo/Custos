@@ -195,3 +195,23 @@ test('a flagged profile page aliases its top bar and mentions, and hides the han
       'switching names off restores everything');
   } finally { h.close(); }
 });
+
+test('aliases follow accounts when X reuses an element for another author', async () => {
+  const h = await start(flaggedProfile, { url: 'https://x.com/home' });
+  try {
+    const friend = h.document.getElementById('friend-reply');
+    assert.equal(friend.querySelector('.tabcloser-alias'), null);
+    const relink = (from, to) => {
+      for (const link of friend.querySelectorAll('[data-testid="User-Name"] a')) link.setAttribute('href', link.getAttribute('href').replace(from, to));
+      const handle = [...friend.querySelectorAll('[data-testid="User-Name"] span')].find(span => span.textContent.startsWith('@'));
+      handle.textContent = '@' + to;
+    };
+    relink('friend', 'Spicy_One');
+    await h.settle();
+    assert.ok(friend.querySelector('.tabcloser-alias'), 'the reused element now shows a flagged account');
+    relink('Spicy_One', 'friend');
+    await h.settle();
+    assert.equal(friend.querySelector('.tabcloser-alias'), null, 'the alias goes when the element returns to an unflagged account');
+    assert.equal(friend.querySelector('.tabcloser-name-hidden, .tabcloser-handle-hidden'), null);
+  } finally { h.close(); }
+});

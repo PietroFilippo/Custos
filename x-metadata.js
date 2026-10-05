@@ -92,7 +92,9 @@
 
   function summarizeDiagnosticValue(value) {
     if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
-    if (typeof value === 'string') return value.slice(0, 120);
+    // Only enum-like tokens are copied; free text (which could quote a post
+    // or a username) is reduced to its length.
+    if (typeof value === 'string') return /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : 'string(' + value.length + ')';
     if (Array.isArray(value)) return 'array(' + value.length + ')';
     return 'object(' + Object.keys(value).slice(0, 10).join(',') + ')';
   }
@@ -259,7 +261,7 @@
     return [...tweetIds];
   }
 
-  function extractDirectVideoSources(payload) {
+  function directVideoSources(payload) {
     const selected = new Map();
     const seen = new Set();
 
@@ -278,6 +280,9 @@
       }
     }
 
+    const videosByTweet = new Map();
+    const byPoster = {};
+
     function inspect(node) {
       if (!node || typeof node !== 'object' || seen.has(node)) return;
       seen.add(node);
@@ -285,12 +290,20 @@
       const tweetId = tweetIdFromNode(node);
       if (tweetId && isTweetNode(node, media) && Array.isArray(media)) {
         for (const item of media) {
+          let best = null;
           for (const variant of item?.video_info?.variants ?? []) {
             if (!isDirectMp4(variant)) continue;
             const rank = variantRank(variant);
-            const previous = selected.get(tweetId);
-            if (!previous || rank < previous.rank) selected.set(tweetId, { rank, url: variant.url });
+            if (!best || rank < best.rank) best = { rank, url: variant.url };
           }
+          if (!best) continue;
+          // Each video is identified by its poster, which the page shows too.
+          const poster = normalizeMediaUrl(item.media_url_https || item.media_url || '');
+          if (!videosByTweet.has(tweetId)) videosByTweet.set(tweetId, new Set());
+          videosByTweet.get(tweetId).add(poster || best.url);
+          if (poster) byPoster[poster] = { url: best.url, tweetId };
+          const previous = selected.get(tweetId);
+          if (!previous || best.rank < previous.rank) selected.set(tweetId, best);
         }
       }
       for (const child of Object.values(node)) {
@@ -299,7 +312,20 @@
     }
 
     inspect(payload);
-    return Object.fromEntries([...selected].map(([tweetId, value]) => [tweetId, value.url]));
+    // A tweet-level source is only safe for single-video posts: in a
+    // multi-video post it would lend one video's frames to the other.
+    const byTweet = Object.fromEntries([...selected]
+      .filter(([tweetId]) => videosByTweet.get(tweetId)?.size === 1)
+      .map(([tweetId, value]) => [tweetId, value.url]));
+    return { byTweet, byPoster };
+  }
+
+  function extractDirectVideoSources(payload) {
+    return directVideoSources(payload).byTweet;
+  }
+
+  function extractDirectVideoSourcesByPoster(payload) {
+    return directVideoSources(payload).byPoster;
   }
 
   function extractSensitiveMedia(payload) {
@@ -357,6 +383,8 @@
     extractAccounts,
     extractAgeVerificationTweetIds,
     extractDirectVideoSources,
+    extractDirectVideoSourcesByPoster,
+    directVideoSources,
     extractSensitiveMedia,
     normalizeMediaUrl,
     summarizeSensitivitySignals,

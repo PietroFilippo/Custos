@@ -185,6 +185,19 @@
   position: fixed !important;
   z-index: 2147483647 !important;
 }
+.tabcloser-lightbox-close {
+  background: rgba(0, 0, 0, 0.6) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border-radius: 8px !important;
+  color: #fff !important;
+  cursor: pointer !important;
+  font: 600 14px/1 system-ui, sans-serif !important;
+  padding: 9px 14px !important;
+  position: absolute !important;
+  right: 20px !important;
+  top: 20px !important;
+}
+.tabcloser-lightbox-close:focus-visible { outline: 2px solid var(--tabcloser-focus) !important; outline-offset: 2px !important; }
 .tabcloser-lightbox img {
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.8) !important;
   max-height: 92vh !important;

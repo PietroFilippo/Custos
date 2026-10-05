@@ -272,13 +272,18 @@ function setStatus(card, rule) {
   usage.replaceChildren(...lines);
 
   const buttons = card.querySelector('.rule-buttons');
-  const reset = el('button', { type: 'button', class: 'btn btn-quiet btn-sm', 'data-action': 'reset' }, 'Reset timer');
-  reset.addEventListener('click', async () => {
-    await browser.runtime.sendMessage({ type: 'resetAccum', domain: rule.domain });
-    await refreshSnapshot();
-    setStatus(card, rule);
-  });
-  const children = [reset];
+  const children = [];
+  // A locked timer keeps counting: resetting it would undo the lock.
+  if (!locked) {
+    const reset = el('button', { type: 'button', class: 'btn btn-quiet btn-sm', 'data-action': 'reset' }, 'Reset timer');
+    reset.addEventListener('click', async () => {
+      const response = await browser.runtime.sendMessage({ type: 'resetAccum', domain: rule.domain });
+      if (!response?.ok) showSaveError(response?.error);
+      await refreshSnapshot();
+      setStatus(card, rule);
+    });
+    children.push(reset);
+  }
   if (blockActive) {
     if (rule.lockUnblock && isLocked(rule.disableLockedUntil)) {
       children.push(el('span', { class: 'status-line warn lock-icon' }, 'Early unblock is locked'));
@@ -305,7 +310,10 @@ function ruleScope(rule) {
 
 function renderRule(rule) {
   const locked = isLocked(rule.disableLockedUntil);
-  const card = el('article', { class: 'rule' + (rule.enabled ? '' : ' disabled') });
+  // While locked, edits may only make the rule stricter; the saved rule is
+  // the baseline the background compares against.
+  const base = (locked && snapshot.rules.find(item => item.id === rule.id)) || rule;
+  const card = el('article', { class: 'rule' + (rule.enabled ? '' : ' disabled'), 'data-locked': String(locked) });
 
   const domainInput = el('input', { class: 'input domain-input', type: 'text', placeholder: 'e.g. x.com', 'aria-label': 'Domain', disabled: locked });
   domainInput.value = rule.domain;
@@ -320,26 +328,28 @@ function renderRule(rule) {
     delBtn,
   ]));
 
-  const closeAfterInput = el('input', { class: 'input input-num', type: 'number', min: '0.1', step: '0.1', disabled: locked });
+  const closeAfterInput = el('input', { class: 'input input-num', type: 'number', min: '0.1', step: '0.1',
+    max: locked ? String(Math.round((base.closeAfterSec / 60) * 100) / 100) : null });
   closeAfterInput.value = String(Math.round((rule.closeAfterSec / 60) * 100) / 100);
-  const blockCheckbox = el('input', { type: 'checkbox', disabled: locked, 'aria-label': 'Block after close' });
+  const blockCheckbox = el('input', { type: 'checkbox', disabled: locked && base.blockAfterClose, 'aria-label': 'Block after close' });
   blockCheckbox.checked = rule.blockAfterClose;
-  const blockDurInput = el('input', { class: 'input input-num', type: 'number', min: '0.1', step: '0.1', 'aria-label': 'Block duration in minutes', disabled: locked || !rule.blockAfterClose });
+  const blockDurInput = el('input', { class: 'input input-num', type: 'number', step: '0.1', 'aria-label': 'Block duration in minutes',
+    min: locked && base.blockAfterClose ? String(Math.round((base.blockDurationSec / 60) * 100) / 100) : '0.1', disabled: !rule.blockAfterClose });
   blockDurInput.value = String(Math.round((rule.blockDurationSec / 60) * 100) / 100);
   card.appendChild(el('div', { class: 'rule-fields' }, [
     el('label', { class: 'field' }, ['Close after', closeAfterInput, 'min of active time']),
     el('span', { class: 'field' }, [el('label', { class: 'check' }, [blockCheckbox, el('span', null, 'Block for')]), blockDurInput, 'min after close']),
   ]));
 
-  const lockUnblockCheckbox = el('input', { type: 'checkbox', disabled: locked });
+  const lockUnblockCheckbox = el('input', { type: 'checkbox', disabled: locked && !!base.lockUnblock });
   lockUnblockCheckbox.checked = !!rule.lockUnblock;
   card.appendChild(el('div', { class: 'rule-fields' }, [
     el('label', { class: 'check' }, [lockUnblockCheckbox, el('span', null, 'A lock also prevents “Unblock now”')]),
   ]));
 
   if (locked) {
-    card.appendChild(lockBanner(rule.disableLockedUntil, 'Settings, the enable switch, and delete are unavailable until then' +
-      (rule.lockUnblock ? ', and so is early unblock.' : '. “Unblock now” stays available.')));
+    card.appendChild(lockBanner(rule.disableLockedUntil, 'Until then the rule can only get stricter: a shorter limit or a longer block. The domain, the enable switch, delete, and resets are unavailable' +
+      (base.lockUnblock ? ', and so is early unblock.' : '; “Unblock now” stays available.')));
   }
 
   const actions = el('div', { class: 'rule-actions' }, el('div', { class: 'rule-buttons' }));
@@ -371,7 +381,7 @@ function renderRule(rule) {
   });
   blockCheckbox.addEventListener('change', event => {
     rule.blockAfterClose = event.target.checked;
-    blockDurInput.disabled = locked || !rule.blockAfterClose;
+    blockDurInput.disabled = !rule.blockAfterClose;
     scheduleSave();
   });
   blockDurInput.addEventListener('input', event => {
@@ -615,6 +625,9 @@ function renderXProtection() {
   $xSacredArt.checked = config.sacredArt === true;
   $xReplaceText.checked = config.replaceText === true;
   $xBlockLike.checked = config.blockLike === true;
+  // Protections, unlike presentation, cannot be switched off during a lock.
+  $xReplaceText.disabled = (locks.labeled || locks.model) && $xReplaceText.checked;
+  $xBlockLike.disabled = (locks.labeled || locks.model) && $xBlockLike.checked;
   renderReveals(config, locks);
   renderProfile(config, locks);
   renderManualHides(snapshot.xUserControls || { posts: [], media: [] });
@@ -855,10 +868,18 @@ browser.extension?.isAllowedIncognitoAccess?.()
 setInterval(async () => {
   if (!workingRules) return;
   await refreshSnapshot();
-  $rules.querySelectorAll('.rule').forEach((card, index) => {
-    const rule = workingRules[index];
-    if (rule) setStatus(card, rule);
-  });
+  const cards = [...$rules.querySelectorAll('.rule')];
+  const lockChanged = cards.some((card, index) => workingRules[index] &&
+    card.dataset.locked !== String(isLocked(snapshot.rules.find(rule => rule.id === workingRules[index].id)?.disableLockedUntil)));
+  if (lockChanged) {
+    for (const rule of workingRules) rule.disableLockedUntil = snapshot.rules.find(item => item.id === rule.id)?.disableLockedUntil ?? rule.disableLockedUntil;
+    render();
+  } else {
+    cards.forEach((card, index) => {
+      const rule = workingRules[index];
+      if (rule) setStatus(card, rule);
+    });
+  }
   renderSettings();
 }, 1000);
 

@@ -348,3 +348,32 @@ test('extracts account flags for profile protection without names, bios, or link
     assert.equal(serialized.includes(secret), false, secret + ' must not leave the extractor');
   }
 });
+
+test('multi-video posts map each video by its poster and never by the post alone', () => {
+  const metadata = require('../x-metadata.js');
+  const video = (poster, url) => ({ media_url_https: poster, video_info: { variants: [{ content_type: 'video/mp4', bitrate: 256000, url }] } });
+  const payload = { data: { tweet: { rest_id: '900', legacy: { full_text: 'two videos', extended_entities: { media: [
+    video('https://pbs.twimg.com/amplify_video_thumb/1/img/a.jpg', 'https://video.twimg.com/amplify_video/1/vid/a.mp4'),
+    video('https://pbs.twimg.com/amplify_video_thumb/2/img/b.jpg?name=small', 'https://video.twimg.com/amplify_video/2/vid/b.mp4'),
+  ] } } }, single: { rest_id: '901', legacy: { full_text: 'one gif', extended_entities: { media: [
+    video('https://pbs.twimg.com/tweet_video_thumb/G.jpg', 'https://video.twimg.com/tweet_video/G.mp4'),
+  ] } } } } };
+  const sources = metadata.directVideoSources(payload);
+  assert.equal(sources.byTweet['900'], undefined, 'a two-video post has no single source');
+  assert.equal(sources.byTweet['901'], 'https://video.twimg.com/tweet_video/G.mp4');
+  assert.deepEqual(sources.byPoster['https://pbs.twimg.com/amplify_video_thumb/2/img/b.jpg'], { url: 'https://video.twimg.com/amplify_video/2/vid/b.mp4', tweetId: '900' });
+  assert.equal(sources.byPoster['https://pbs.twimg.com/amplify_video_thumb/1/img/a.jpg'].url, 'https://video.twimg.com/amplify_video/1/vid/a.mp4');
+  assert.deepEqual(metadata.extractDirectVideoSources(payload), sources.byTweet);
+});
+
+test('diagnostics copy enum-like values but never free text', () => {
+  const metadata = require('../x-metadata.js');
+  const summary = metadata.summarizeSensitivitySignals({ data: { tweet: { rest_id: '1', legacy: {
+    sensitive_media_warning: 'Content warning: @alice said private post text', profile_interstitial_type: 'SensitiveMedia',
+  } } } });
+  const serialized = JSON.stringify(summary);
+  assert.equal(serialized.includes('alice'), false);
+  assert.equal(serialized.includes('private post text'), false);
+  assert.ok(serialized.includes('SensitiveMedia'), 'enum tokens stay readable');
+  assert.ok(serialized.includes('string(46)'), 'free text is reduced to its length');
+});

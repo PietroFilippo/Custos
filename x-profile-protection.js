@@ -201,6 +201,17 @@
     [...article.children].find(child => child.classList.contains('tabcloser-collapsed-reply'))?.remove();
   }
 
+  // X reuses elements for other accounts: a mark only stays while the element
+  // still belongs to the account it was made for.
+  function ownerMatches(node, handle) {
+    if (node.matches('a')) return (node.getAttribute('href') || '').toLowerCase() === '/' + handle;
+    if (node.matches('article')) return authorHandle(node) === handle;
+    const container = node.closest(nameContainerSelector);
+    if (!container || node.matches('.tabcloser-bio-hidden')) return true;
+    const current = handleWithin(container);
+    return !current || current === handle;
+  }
+
   // Undoes anything that no longer applies, walking only Custos's own marks.
   function cleanup() {
     for (const node of [...marked]) {
@@ -209,26 +220,26 @@
       if (node.classList.contains('tabcloser-alias')) {
         const name = node.nextElementSibling;
         const nameHandle = name?.dataset.tabcloserAliasFor;
-        if (!name?.classList.contains('tabcloser-name-hidden') || !nameApplies(nameHandle)) {
+        if (!name?.classList.contains('tabcloser-name-hidden') || !nameApplies(nameHandle) || !ownerMatches(name, nameHandle)) {
           node.remove();
           marked.delete(node);
         } else if (node.textContent !== aliasFor(nameHandle)) {
           node.textContent = aliasFor(nameHandle);
         }
       } else if (node.classList.contains('tabcloser-name-hidden')) {
-        if (!node.previousElementSibling?.classList.contains('tabcloser-alias') || !nameApplies(handle)) {
+        if (!node.previousElementSibling?.classList.contains('tabcloser-alias') || !nameApplies(handle) || !ownerMatches(node, handle)) {
           restoreName(node);
           marked.delete(node);
         }
       } else if (node.matches('.tabcloser-handle-hidden, .tabcloser-bio-hidden')) {
-        if (!nameApplies(handle)) {
+        if (!nameApplies(handle) || !ownerMatches(node, handle)) {
           if (node.previousElementSibling?.classList.contains('tabcloser-bio-notice')) node.previousElementSibling.remove();
           node.classList.remove('tabcloser-handle-hidden', 'tabcloser-bio-hidden');
           delete node.dataset.tabcloserAliasFor;
           marked.delete(node);
         }
       } else if (node.hasAttribute('data-tabcloser-collapsed')) {
-        if (!collapseApplies(node, handle)) {
+        if (!collapseApplies(node, handle) || !ownerMatches(node, handle)) {
           uncollapse(node);
           marked.delete(node);
         }
@@ -419,12 +430,19 @@
     if (!names && !ownPending) return;
     for (const mutation of mutations) {
       if (mutation.target.nodeName === 'TITLE') { titleChanged = true; continue; }
+      if (mutation.type === 'attributes') {
+        // A changed profile link means the element now shows another account.
+        if (!extensionOwnedElement(mutation.target)) {
+          pendingScan.add(mutation.target.closest(nameContainerSelector) || mutation.target.closest('article') || mutation.target);
+        }
+        continue;
+      }
       for (const node of mutation.addedNodes) {
         if (node instanceof Element && !extensionOwnedElement(node)) pendingScan.add(node);
       }
     }
     if (pendingScan.size || titleChanged) schedule();
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href'] });
 
   globalThis.TabCloserXProfile = {
     explain,
