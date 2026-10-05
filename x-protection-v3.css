@@ -198,9 +198,23 @@
   top: 20px !important;
 }
 .tabcloser-lightbox-close:focus-visible { outline: 2px solid var(--tabcloser-focus) !important; outline-offset: 2px !important; }
+.tabcloser-lightbox-figure {
+  align-items: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  margin: 0 !important;
+}
+.tabcloser-lightbox-caption {
+  color: #e7e9ea !important;
+  font: 13px/1.5 system-ui, sans-serif !important;
+  max-width: 80vw !important;
+  text-align: center !important;
+}
+.tabcloser-lightbox-caption a { color: var(--tabcloser-accent) !important; text-decoration: underline !important; }
 .tabcloser-lightbox img {
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.8) !important;
-  max-height: 92vh !important;
+  max-height: 84vh !important;
   max-width: 92vw !important;
 }
 

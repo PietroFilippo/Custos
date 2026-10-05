@@ -379,12 +379,28 @@ function cellAspectBucketFor(root) {
   return aspectBucket(rect.width / rect.height);
 }
 
-// Deterministic per-media pick so re-renders never shuffle the artwork.
+// Each post keeps its painting for the session, even when X remounts it.
+const sacredArtByKey = new Map();
+
+// Paintings currently shown on the page, so two posts on screen never share one.
+function paintingsInUse() {
+  return new Set([...document.querySelectorAll('.tabcloser-media-overlay[data-tabcloser-art]')].map(overlay => overlay.dataset.tabcloserArt));
+}
+
+// Stable per-post pick: the hash chooses a starting painting; if another post
+// on the page already shows it, the next unused painting of the same shape is
+// taken. Re-renders never shuffle the artwork.
 function sacredArtUrlFor(root) {
   const artList = globalThis.TabCloserSacredArt || [];
   if (!artList.length) return null;
   const existing = sacredArtByRoot.get(root);
   if (existing) return existing;
+  const key = sacredArtKeyFor(root);
+  const remembered = sacredArtByKey.get(key);
+  if (remembered) {
+    sacredArtByRoot.set(root, remembered);
+    return remembered;
+  }
   const bucket = cellAspectBucketFor(root);
   const fitting = bucket
     ? artList.filter(entry => {
@@ -393,10 +409,24 @@ function sacredArtUrlFor(root) {
       })
     : [];
   const candidates = fitting.length ? fitting : artList;
-  const pick = candidates[hashString(sacredArtKeyFor(root)) % candidates.length];
-  const url = browser.runtime.getURL('assets/sacred-art/' + artEntryFile(pick));
+  const start = hashString(key) % candidates.length;
+  const inUse = paintingsInUse();
+  const urlOf = entry => browser.runtime.getURL('assets/sacred-art/' + artEntryFile(entry));
+  let url = urlOf(candidates[start]);
+  for (let step = 0; step < candidates.length; step += 1) {
+    const candidate = urlOf(candidates[(start + step) % candidates.length]);
+    if (!inUse.has(candidate)) { url = candidate; break; }
+  }
   sacredArtByRoot.set(root, url);
+  sacredArtByKey.set(key, url);
+  trimOldestMapEntries(sacredArtByKey, 2000);
   return url;
+}
+
+// The credit for a painting URL, from the generated art list.
+function paintingCredit(url) {
+  const file = decodeURIComponent(String(url).split('/').pop());
+  return (globalThis.TabCloserSacredArt || []).find(entry => typeof entry === 'object' && entry.file === file) || null;
 }
 
 // Clicking censored media opens our own viewer with the painting, never X's
@@ -422,7 +452,30 @@ function openLightbox(url) {
   close.type = 'button';
   close.className = 'tabcloser-lightbox-close';
   close.textContent = 'Close';
-  lightbox.append(image, close);
+  const figure = document.createElement('figure');
+  figure.className = 'tabcloser-lightbox-figure';
+  figure.appendChild(image);
+  // Credit the work: title, artist, date, and the museum that shares it.
+  const credit = paintingCredit(url);
+  if (credit?.title) {
+    image.alt = credit.title + (credit.artist ? ', ' + credit.artist : '');
+    const caption = document.createElement('figcaption');
+    caption.className = 'tabcloser-lightbox-caption';
+    const title = document.createElement('strong');
+    title.textContent = credit.title;
+    caption.append(title, ' — ' + [credit.artist, credit.date].filter(Boolean).join(', ') + (credit.museum ? ' · ' : ''));
+    if (credit.museum) {
+      const link = document.createElement('a');
+      link.href = credit.url || '#';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = credit.museum;
+      link.addEventListener('click', event => event.stopPropagation());
+      caption.appendChild(link);
+    }
+    figure.appendChild(caption);
+  }
+  lightbox.append(figure, close);
   lightbox.addEventListener('click', closeLightbox);
   document.documentElement.appendChild(lightbox);
   close.focus({ preventScroll: true });
@@ -605,6 +658,7 @@ function setRootState(root, state, reason) {
   // Blur is the default cover. The painting is a presentation choice layered
   // over the same blurred, protected media.
   const artUrl = state === 'protected' && mature && settings.sacredArt ? sacredArtUrlFor(root) : null;
+  delete overlay.dataset.tabcloserArt;
   overlay.className = 'tabcloser-media-overlay' +
     (shieldOnly ? ' tabcloser-media-overlay-pending' : '') +
     (artUrl ? ' tabcloser-media-overlay-art' : '') +
@@ -629,6 +683,7 @@ function setRootState(root, state, reason) {
     overlay.appendChild(backdrop);
     overlay.appendChild(artwork);
     paintArtworkWhenReady(artUrl, [backdrop, artwork]);
+    overlay.dataset.tabcloserArt = artUrl;
   }
   if (!shieldOnly) {
     const label = document.createElement('span');
