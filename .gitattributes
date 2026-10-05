@@ -1,0 +1,8 @@
+# Same line endings on every OS, so the source archive for review and any
+# checkout build byte-identical packages.
+* text=auto eol=lf
+*.jpg binary
+*.png binary
+*.gz binary
+*.wasm binary
+*.bin binary
