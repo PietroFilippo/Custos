@@ -8,6 +8,7 @@ const $xSacredArt = document.getElementById('xSacredArt');
 const $xReplaceText = document.getElementById('xReplaceText');
 const $xBlockLike = document.getElementById('xBlockLike');
 const $xReveal = document.getElementById('xRevealDailySec');
+const $xRevealPerPost = document.getElementById('xRevealPerPostSec');
 const $xRevealStatus = document.getElementById('xRevealStatus');
 const $xManualHides = document.getElementById('xManualHides');
 const $adultEnabled = document.getElementById('adultSitesEnabled');
@@ -682,6 +683,10 @@ function renderReveals(config, locks) {
   const xLocked = locks.labeled || locks.model;
   if (!revealDraft) $xReveal.value = config.revealDailySec || 0;
   $xReveal.max = xLocked || revealLocked ? config.revealDailySec || 0 : 3600;
+  // Per-post time follows the allowance's lock rule: it may only go down.
+  const perPost = Number.isInteger(config.revealPerPostSec) ? config.revealPerPostSec : 3;
+  $xRevealPerPost.value = String(perPost);
+  for (const option of $xRevealPerPost.options) option.disabled = (xLocked || revealLocked) && Number(option.value) > perPost;
   const dailyMs = controls.dailyMs || 0;
   $xRevealStatus.textContent = config.revealDailySec > 0
     ? (dailyMs > 0 ? (Math.ceil(dailyMs / 100) / 10).toFixed(1) + ' s left today · resets at local midnight' : 'Daily allowance used up. Resets at local midnight.')
@@ -698,7 +703,7 @@ function renderReveals(config, locks) {
         label: 'Lock allowance…',
         title: 'Lock the reveal allowance',
         scope: seconds > 0 ? seconds + ' seconds per day' : 'Reveals off (0 seconds)',
-        help: 'Until the lock ends, the allowance can only go down. Locking 0 keeps reveals off. A lock can’t be shortened.',
+        help: 'Until the lock ends, the allowance and the time per post can only go down. Locking 0 keeps reveals off. A lock can’t be shortened.',
         async onLock(durationSec) {
           if (!await saveRevealAllowance()) return document.getElementById('xRevealFeedback').textContent;
           const result = await browser.runtime.sendMessage({ type: 'lockXReveal', durationSec });
@@ -730,6 +735,12 @@ async function saveRevealAllowance() {
   return true;
 }
 document.getElementById('saveXReveal').addEventListener('click', saveRevealAllowance);
+$xRevealPerPost.addEventListener('change', async () => {
+  const result = await browser.runtime.sendMessage({ type: 'saveXProtection', revealPerPostSec: Number($xRevealPerPost.value) });
+  feedback('xRevealFeedback', result?.ok ? 'Time per post saved.' : result?.error || 'Unable to save.', !result?.ok);
+  await refreshSnapshot();
+  renderSettings();
+});
 
 // === Profile protection ===
 function profileConfig(config) {

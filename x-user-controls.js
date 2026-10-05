@@ -4,7 +4,11 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.TabCloserXUserControls = api;
 })(globalThis, function() {
+  // Per-post daily reveal time: 3 s by default, configurable from 3 to 10 s.
   const POST_LIMIT_MS = 3000;
+  const MIN_POST_SEC = 3;
+  const MAX_POST_SEC = 10;
+  const postLimitSec = value => (Number.isInteger(value) && value >= MIN_POST_SEC && value <= MAX_POST_SEC ? value : POST_LIMIT_MS / 1000);
   const validPost = value => typeof value === 'string' && /^\d{1,30}$/.test(value);
   function validMedia(value) {
     if (typeof value !== 'string' || value.length > 2048) return false;
@@ -43,26 +47,27 @@
       state.ledger = { day, usedMs: 0, posts: {}, lease: null };
     }
   }
-  function remaining(state, limitSec, postId, now) {
+  function remaining(state, limitSec, postId, now, postLimitMs = POST_LIMIT_MS) {
     rollDay(state, now);
     return {
       dailyMs: Math.max(0, limitSec * 1000 - state.ledger.usedMs),
-      postMs: Math.max(0, POST_LIMIT_MS - (state.ledger.posts[postId] || 0)),
+      postMs: Math.max(0, postLimitMs - (state.ledger.posts[postId] || 0)),
+      postLimitMs,
       day: state.ledger.day,
     };
   }
-  function begin(state, { postId, tabId, limitSec, now, token }) {
+  function begin(state, { postId, tabId, limitSec, postLimitMs = POST_LIMIT_MS, now, token }) {
     if (!validPost(postId)) return { ok: false, error: 'This post has no stable identity.' };
-    const left = remaining(state, limitSec, postId, now);
+    const left = remaining(state, limitSec, postId, now, postLimitMs);
     if (state.ledger.lease?.deadline > now) return { ok: false, error: 'A reveal is already active in another view.' };
-    const durationMs = Math.floor(Math.min(left.dailyMs, left.postMs, POST_LIMIT_MS));
-    if (durationMs <= 0) return { ok: false, error: left.dailyMs <= 0 ? 'No daily reveal allowance remains.' : 'This post has used its three seconds today.' };
+    const durationMs = Math.floor(Math.min(left.dailyMs, left.postMs, postLimitMs));
+    if (durationMs <= 0) return { ok: false, error: left.dailyMs <= 0 ? 'No daily reveal allowance remains.' : 'This post has used its ' + postLimitMs / 1000 + ' seconds today.' };
     const lease = { token, postId, tabId, startedAt: now, deadline: now + durationMs, durationMs };
     // Reserve before sending permission to the page. Reloads/crashes cannot refund time.
     state.ledger.usedMs += durationMs;
     state.ledger.posts[postId] = (state.ledger.posts[postId] || 0) + durationMs;
     state.ledger.lease = lease;
-    return { ok: true, ...lease, ...remaining(state, limitSec, postId, now) };
+    return { ok: true, ...lease, ...remaining(state, limitSec, postId, now, postLimitMs) };
   }
   function end(state, { token, tabId, now }) {
     const lease = state.ledger.lease;
@@ -75,5 +80,5 @@
     state.ledger.lease = null;
     return true;
   }
-  return { normalize, validPost, validMedia, remaining, begin, end, POST_LIMIT_MS };
+  return { normalize, validPost, validMedia, remaining, begin, end, postLimitSec, POST_LIMIT_MS, MIN_POST_SEC, MAX_POST_SEC };
 });

@@ -65,3 +65,18 @@ test('invalid manual identities are discarded while valid post and media choices
   assert.deepEqual(Object.keys(state.posts), ['123']);
   assert.deepEqual(Object.keys(state.media), [key]);
 });
+
+test('the per-post limit is configurable from 3 to 10 seconds and caps each post', () => {
+  assert.equal(controls.postLimitSec(10), 10);
+  assert.equal(controls.postLimitSec(3), 3);
+  for (const invalid of [2, 11, 4.5, '6', null, undefined]) assert.equal(controls.postLimitSec(invalid), 3, String(invalid));
+  const state = controls.normalize();
+  const first = controls.begin(state, request({ postLimitMs: 8000 }));
+  assert.equal(first.durationMs, 8000);
+  assert.equal(first.postLimitMs, 8000);
+  controls.end(state, { token: 'one', tabId: 1, now: today + 8000 });
+  const spent = controls.begin(state, request({ token: 'two', now: today + 9000, postLimitMs: 8000 }));
+  assert.equal(spent.ok, false);
+  assert.match(spent.error, /used its 8 seconds/);
+  assert.equal(controls.remaining(state, 30, '123', today + 9000, 5000).postMs, 0, 'lowering the limit below usage leaves nothing');
+});

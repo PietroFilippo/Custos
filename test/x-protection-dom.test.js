@@ -1915,3 +1915,24 @@ test('a censored quoted card never blocks liking the post that quotes it; the po
     assert.equal(click.defaultPrevented, true, 'the post\'s own hidden media still blocks likes');
   } finally { own.dom.window.close(); }
 });
+
+test('closing "Why hidden?" returns focus to its button without scrolling back to the post', async () => {
+  const focusCalls = [];
+  const h = await startCoordinator(controlFixture, { interactions: true,
+    prepare(window) {
+      const focus = window.HTMLElement.prototype.focus;
+      window.HTMLElement.prototype.focus = function recordFocus(options) { focusCalls.push({ element: this, options }); return focus.call(this, options); };
+    },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.83 }) });
+  try {
+    const whyHidden = h.window.document.querySelector('.tabcloser-media-actions button');
+    whyHidden.click();
+    const close = [...h.window.document.querySelectorAll('.tabcloser-control-panel button')].find(button => button.textContent === 'Close');
+    focusCalls.length = 0;
+    close.click();
+    assert.equal(h.window.document.querySelector('.tabcloser-control-panel'), null);
+    const restore = focusCalls.find(call => call.element === whyHidden);
+    assert.ok(restore, 'focus returns to the opener for keyboard users');
+    assert.equal(restore.options?.preventScroll, true, 'the page must not jump back to the post');
+  } finally { h.dom.window.close(); }
+});

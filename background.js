@@ -13,6 +13,7 @@ const state = {
     blockLike: false,   // prevent liking posts whose media is censored
     sacredArt: false,   // presentation only: cover hidden media with a painting instead of the blur
     revealDailySec: 0,  // opt-in; shared across all X tabs
+    revealPerPostSec: 3, // daily reveal time per post, 3-10 s
     revealLockUntil: null,
     profile: null,      // see normalizeXProfile
   },
@@ -72,6 +73,7 @@ async function loadState() {
     sacredArt: raw.sacredArt === true,
     revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
+    revealPerPostSec: TabCloserXUserControls.postLimitSec(raw.revealPerPostSec),
     profile: normalizeXProfile(raw.profile),
   };
   // Obsolete learning data is optional cleanup and must never abort startup.
@@ -776,10 +778,12 @@ function xControlsLocked() {
 }
 
 function xControlSnapshot(postId) {
-  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, Date.now());
+  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, Date.now(),
+    state.xProtection.revealPerPostSec * 1000);
   return {
     posts: Object.keys(xUserControls.posts), texts: Object.keys(xUserControls.texts), media: Object.keys(xUserControls.media),
-    revealDailySec: state.xProtection.revealDailySec, locked: xControlsLocked(), ...remaining,
+    revealDailySec: state.xProtection.revealDailySec, revealPerPostSec: state.xProtection.revealPerPostSec,
+    locked: xControlsLocked(), ...remaining,
   };
 }
 
@@ -817,7 +821,7 @@ async function handleXControlMessage(msg, sender) {
     if (!win.focused || active?.id !== sender.tab.id) return { ok: false, error: 'Keep the X tab focused to reveal.' };
     const result = TabCloserXUserControls.begin(xUserControls, {
       postId: msg.postId, tabId: sender.tab.id, limitSec: state.xProtection.revealDailySec,
-      now: Date.now(), token: uuid(),
+      postLimitMs: state.xProtection.revealPerPostSec * 1000, now: Date.now(), token: uuid(),
     });
     if (result.ok) await browser.storage.local.set({ xUserControls });
     return result.ok ? result : { ...xControlSnapshot(msg.postId), ...result };
@@ -974,6 +978,14 @@ async function handleMessage(msg, sender) {
           return { ok: false, error: 'The reveal allowance cannot increase while its allowance lock or X protection lock is active.' };
         }
       }
+      if (msg.revealPerPostSec != null) {
+        if (TabCloserXUserControls.postLimitSec(msg.revealPerPostSec) !== msg.revealPerPostSec) {
+          return { ok: false, error: 'Choose 3 to 10 seconds per post.' };
+        }
+        if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealPerPostSec > current.revealPerPostSec) {
+          return { ok: false, error: 'The time per post cannot increase while its allowance lock or X protection lock is active.' };
+        }
+      }
       if (current.labeled.enabled && !labeledEnabled && isLockActive(current.labeled.lockUntil)) {
         return { ok: false, error: 'X-label protection is locked until ' + new Date(current.labeled.lockUntil).toLocaleString() + '.' };
       }
@@ -991,6 +1003,7 @@ async function handleMessage(msg, sender) {
       current.labeled.enabled = labeledEnabled;
       current.model.enabled = modelEnabled;
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
+      if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
       // Presentation only: the painting and the blur hide the same media, so
