@@ -1193,6 +1193,11 @@ async function classifyRoot(root, fingerprint, token) {
     // GIFs are videos too: timeline quote cards show only their tweet_video_thumb
     // image, and a noisy thumbnail must be overrulable by the GIF's frames.
     const isVideo = videos.length > 0 || images.some(image => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(image.src));
+    // An image the user marked "Not sensitive" (once its day-long wait has
+    // passed) is released despite a classifier verdict. X labels and manual
+    // hides still win: they are checked before and after this point.
+    const markedSafe = !isVideo && !!globalThis.TabCloserXInteractions?.markedNotSensitive?.(root);
+    let releasedByMark = false;
     let thumbnailVerdict = null;
     let videoUnavailableReason = '';
     const recordDecision = (result, source) => rootDecisions.set(root, {
@@ -1206,6 +1211,10 @@ async function classifyRoot(root, fingerprint, token) {
       if (result.verdict !== 'safe') {
         if (isVideo && result.reason === 'visual') {
           thumbnailVerdict = result;
+          continue;
+        }
+        if (markedSafe && result.reason === 'visual') {
+          releasedByMark = true;
           continue;
         }
         recordDecision(result, 'image');
@@ -1288,7 +1297,9 @@ async function classifyRoot(root, fingerprint, token) {
       protectGroup(root, 'visual');
       return;
     }
-    rememberVerifiedSafeMedia(root);
+    // A release by mark is never cached as verified safe: removing the mark
+    // must bring the cover back.
+    if (!releasedByMark) rememberVerifiedSafeMedia(root);
     const pageStatusId = statusIdFromHref(location.pathname);
     if (pageStatusId) {
       const rootStatusId = statusIdFor(root);
@@ -1302,7 +1313,7 @@ async function classifyRoot(root, fingerprint, token) {
         knownSensitiveTweet: !!rootStatusId && sensitiveTweetIds.has(rootStatusId),
       });
     }
-    setRootState(root, 'safe', 'visual');
+    setRootState(root, 'safe', releasedByMark ? 'marked' : 'visual');
   } catch (error) {
     if (isActive()) {
       protectUnsafeResult(root, /timeout/i.test(error?.message || '') ? 'timeout' : 'error');

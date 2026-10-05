@@ -3,6 +3,9 @@
 (() => {
   let snapshot = { posts: [], media: [], revealDailySec: 0, locked: false };
   let posts = new Set(), texts = new Set(), media = new Set();
+  // "Not sensitive" marks: active ones release their image; pending ones show
+  // when they take effect.
+  let safeActive = new Set(), safePending = new Map();
   let contextTarget = null, panel = null, panelRoot = null, allowanceText = null, holdButton = null, meter = null;
   let holding = false, requestGeneration = 0, lease = null, revealTimer = null, refreshTimer = null;
   let allowanceTimer = null;
@@ -16,6 +19,9 @@
 
   function manuallyHidden(root) {
     return textHidden(root) || posts.has(statusIdFor(root)) || media.has(stableMediaVerificationKey(root));
+  }
+  function markedNotSensitive(root) {
+    return safeActive.has(stableMediaVerificationKey(root));
   }
   function button(label, action) {
     const element = document.createElement('button');
@@ -41,7 +47,7 @@
     if (profile) return profile;
     const reason = root.dataset.tabcloserMediaReason;
     if (reason === 'manual') return { kind: 'Hidden by you', text: 'You chose to hide this image or video. The choice is saved on this device.' };
-    if (reason === 'metadata') return { kind: 'X label', text: 'X supplied a sensitive-content label or warning for this media, post, or author.' };
+    if (reason === 'metadata') return { kind: 'X label', text: 'X supplied a sensitive-content label or warning for this media, post, or author. Labels come from X or the poster and can be wrong.' };
     if (reason !== 'visual') return { kind: 'Could not check', text: 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while Custos retries when possible.' };
     const decision = TabCloserXCoordinator.decisionFor(root);
     if (!decision) return { kind: 'On-device classifier', text: 'The on-device model flagged this media during an earlier check in this page. Models can make mistakes.' };
@@ -157,6 +163,8 @@
     holdButton.addEventListener('blur', stopReveal);
     const reveal = panelSection(heading, details, track, allowanceText, holdButton);
     panel.appendChild(reveal);
+    const markSection = notSensitiveSection(root);
+    if (markSection) panel.appendChild(markSection);
     if (manuallyHidden(root)) {
       const scope = posts.has(statusIdFor(root)) ? 'post' : textHidden(root) ? 'text' : 'media';
       const key = scope !== 'media' ? statusIdFor(root) : stableMediaVerificationKey(root);
@@ -172,6 +180,74 @@
     }
     updateAllowance(root);
     allowanceTimer = setInterval(() => { if (!lease && !holding && panelRoot === root) updateAllowance(root); }, 1000);
+  }
+  // "Not sensitive" marks are offered only for an image the classifier hid.
+  // A mark takes effect a day later and only for borderline detections; the
+  // background re-checks the image before accepting it.
+  function notSensitiveSection(root) {
+    if (manuallyHidden(root) || root.dataset.tabcloserMediaReason !== 'visual') return null;
+    const decision = TabCloserXCoordinator.decisionFor(root);
+    const key = stableMediaVerificationKey(root);
+    const source = sourceValues(root).find(value => value && !value.startsWith('blob:'));
+    if (!key || !source || (decision && decision.source !== 'image') || mediaElementsWithin(root, 'video').length ||
+        !/^https:\/\/pbs\.twimg\.com\//.test(source) || /_video_thumb\//.test(source)) return null;
+    const heading = document.createElement('h4');
+    heading.textContent = 'Not sensitive?';
+    const status = paragraph('', 'tabcloser-control-note');
+    status.setAttribute('role', 'status');
+    const section = panelSection(heading, status);
+    const pendingAt = safePending.get(key);
+    if (pendingAt) {
+      status.textContent = 'Marked not sensitive. It will show from ' + formatLockDate(pendingAt) + '.';
+      const cancel = button('Cancel mark', async () => {
+        const result = await send({ type: 'xControlUnmarkSafe', key }).catch(() => null);
+        if (result?.ok) applySnapshot(result);
+        else status.textContent = result?.error || 'Unable to cancel the mark.';
+      });
+      cancel.className = 'tabcloser-secondary';
+      section.appendChild(cancel);
+      return section;
+    }
+    if (!(snapshot.safeMarksPerDay > 0)) {
+      if (snapshot.allowanceLocked) return null;
+      status.textContent = 'If this image is harmless, you can turn on “Not sensitive” marks in Custos settings. A mark takes effect a day later.';
+      return section;
+    }
+    if (decision?.scores && !TabCloserXVerdict.markEligible(decision.scores)) {
+      status.textContent = 'This detection is too confident to mark as not sensitive.';
+      return section;
+    }
+    const left = snapshot.safeMarksLeft || 0;
+    if (left <= 0) {
+      status.textContent = 'No “Not sensitive” marks left today.';
+      return section;
+    }
+    status.textContent = 'If the classifier got this wrong, mark it. The image stays hidden for 24 hours, then shows on this device. ' +
+      left + ' of ' + snapshot.safeMarksPerDay + ' marks left today.';
+    const mark = button('Mark not sensitive…');
+    mark.className = 'tabcloser-secondary';
+    mark.addEventListener('click', async () => {
+      // Two steps, like "Unblock now": the first click only asks.
+      if (mark.dataset.confirm !== 'yes') {
+        mark.dataset.confirm = 'yes';
+        mark.textContent = 'Confirm: show it in 24 hours';
+        return;
+      }
+      mark.disabled = true;
+      status.textContent = 'Checking the image again…';
+      const result = await send({ type: 'xControlMarkSafe', key, url: source }).catch(() => null);
+      if (result?.ok) {
+        applySnapshot(result);
+        messagePanel('Marked not sensitive. This image will show from ' + formatLockDate(result.activeAt) +
+          '. Undo it in “Why hidden?” or in Custos settings.', 'Custos');
+        return;
+      }
+      if (!mark.isConnected) return;
+      status.textContent = result?.error || 'Unable to save the mark.';
+      mark.remove();
+    });
+    section.appendChild(mark);
+    return section;
   }
   async function startReveal(root) {
     if (!holdButton || holdButton.disabled || holding || lease || document.visibilityState !== 'visible' || !document.hasFocus() || !root.isConnected || (root.dataset.tabcloserMediaState !== 'protected' && !textHidden(root) && !globalThis.TabCloserXProfile?.collapsed(root))) return;
@@ -321,7 +397,24 @@
     if (panelRoot) closePanel();
     snapshot = next;
     posts = new Set(next.posts || []); texts = new Set(next.texts || []); media = new Set(next.media || []);
+    const previousActive = safeActive;
+    const marks = Array.isArray(next.safeMarks) ? next.safeMarks : [];
+    safeActive = new Set(marks.filter(mark => mark.active).map(mark => mark.key));
+    safePending = new Map(marks.filter(mark => !mark.active).map(mark => [mark.key, mark.activeAt]));
     refresh();
+    refreshMarked(previousActive);
+  }
+  // Re-check media whose mark just took effect or was removed. The cover
+  // stays up, as a pending check, until the new verdict arrives.
+  function refreshMarked(previousActive) {
+    const changed = new Set([...safeActive].filter(key => !previousActive.has(key)));
+    for (const key of previousActive) if (!safeActive.has(key)) changed.add(key);
+    if (!changed.size) return;
+    document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
+      if (!changed.has(stableMediaVerificationKey(root)) || manuallyHidden(root)) return;
+      TabCloserXCoordinator.invalidate(root);
+      discoverRoot(root);
+    });
   }
   document.addEventListener('contextmenu', event => {
     contextTarget = event.target instanceof Element ? event.target : null;
@@ -366,6 +459,6 @@
     if (lease && (!panelRoot?.isConnected || statusIdFor(panelRoot) !== lease.postId || revealPage !== location.href)) stopReveal();
     if (refreshTimer == null && (pendingScan.size || lease)) refreshTimer = setTimeout(runRefresh, 50);
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'poster', 'href'] });
-  globalThis.TabCloserXInteractions = { manuallyHidden, decorate, refresh, stopReveal, openPanel };
+  globalThis.TabCloserXInteractions = { manuallyHidden, markedNotSensitive, decorate, refresh, stopReveal, openPanel };
   send({ type: 'xControlGet' }).then(result => { if (result?.ok) applySnapshot(result); else refresh(); }).catch(() => refresh());
 })();
