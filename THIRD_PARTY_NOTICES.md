@@ -14,6 +14,8 @@ The paintings in `assets/sacred-art/` cover hidden media when the sacred-art opt
 
 - **The Metropolitan Museum of Art**, Open Access (public domain, CC0). <https://www.metmuseum.org/about-the-met/policies-and-documents/open-access>
 - **The Cleveland Museum of Art**, Open Access (CC0). <https://www.clevelandart.org/open-access>
+- **National Gallery of Art, Washington**, Open Access (CC0). <https://www.nga.gov/artworks/free-images-and-open-access>
+- **The Art Institute of Chicago**, public-domain works (CC0). <https://www.artic.edu/open-access/open-access-images>
 
 `assets/sacred-art/CREDITS.json` lists every painting's title, artist, date, museum, and object page; the painting viewer shows the same credit. The packaged copies are re-encoded at a lower JPEG quality; the images are otherwise unchanged.
 

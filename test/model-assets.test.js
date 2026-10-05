@@ -37,8 +37,8 @@ test('every painting is credited to a public-domain museum source', () => {
   assert.deepEqual(credits.map(entry => entry.file).sort(), paintings, 'CREDITS.json must list exactly the painting files');
   for (const entry of credits) {
     assert.ok(entry.title && entry.artist && entry.museum, 'incomplete credit: ' + entry.file);
-    assert.match(entry.url, /^https:\/\/(?:www\.metmuseum\.org|clevelandart\.org)\//, 'credit needs a museum object page: ' + entry.file);
-    assert.match(entry.file, /^(met|cma)-[a-z0-9-]+-\d+\.jpg$/, 'file names describe the painting: ' + entry.file);
+    assert.match(entry.url, /^https:\/\/(?:www\.metmuseum\.org|clevelandart\.org|www\.artic\.edu|www\.nga\.gov)\//, 'credit needs a museum object page: ' + entry.file);
+    assert.match(entry.file, /^(met|cma|aic|nga)-[a-z0-9-]+-\d+\.jpg$/, 'file names describe the painting: ' + entry.file);
   }
 });
 
