@@ -56,7 +56,7 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 
 ## Settings and add-on details
 
-Custos keeps the shield-and-clock icon and charcoal/gold design of TabCloser. In 0.5.0 the settings page is a single column with at-a-glance status cards, a sticky section menu with lock badges, inline helper text instead of hover tooltips, and one lock control for every lockable setting. Locked sections show the exact end date and time left. The popup shows a one-line summary, a per-area overview with lock chips, and clearer site cards. The block page explains why a site is blocked, whether early unblock is locked, and offers **Close this tab**; it still has no unblock button. The About section shows the installed version, explains local processing and browser access, and links to usage instructions, issues, and third-party notices.
+Custos has a new icon, a shield with a lowered eye for custody of the eyes, and the Lapis palette: ink navy surfaces, a lapis-blue accent, and ivory text, checked for WCAG contrast. Every color comes from named tokens in `theme.css` (and `--tabcloser-*` tokens for controls on X), so the layout is unchanged. In 0.5.0 the settings page is a single column with at-a-glance status cards, a sticky section menu with lock badges, inline helper text instead of hover tooltips, and one lock control for every lockable setting. Locked sections show the exact end date and time left. The popup shows a one-line summary, a per-area overview with lock chips, and clearer site cards. The block page explains why a site is blocked, whether early unblock is locked, and offers **Close this tab**; it still has no unblock button. The About section shows the installed version, explains local processing and browser access, and links to usage instructions, issues, and third-party notices.
 
 In Zen / Firefox, open `about:addons` → **Extensions** → **Custos** for its description, author, version, and project homepage. Use the extension's **Preferences** / **Options** action (the label and placement depend on the browser) to open the full settings tab. The surrounding add-on manager remains browser-owned.
 
@@ -95,7 +95,7 @@ The supplied false-positive logs reproduce the previous decision patterns in reg
 | File | Role |
 |------|------|
 | `manifest.json` | MV3 manifest, permissions, entry points |
-| `theme.css`, `icons/custos.svg` | Shared presentation and scalable shield-and-clock icon |
+| `theme.css`, `icons/` | Shared color tokens and components; scalable lowered-eye icon (`custos.svg`) with PNG exports for listings |
 | `adult-sites.js`, `data/` | Local adult-domain matching and bundled list |
 | `common.js` | Shared helpers (domain matching, formatting) |
 | `background.js` | Focus tracking, auto-close, block enforcement |

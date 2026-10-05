@@ -3,7 +3,7 @@ body {
   display: grid;
   place-items: center;
   padding: 32px 20px;
-  background: radial-gradient(600px 500px at 50% 40%, #293026, var(--bg));
+  background: radial-gradient(600px 500px at 50% 40%, var(--bg-glow), var(--bg));
 }
 main { width: 100%; max-width: 520px; }
 .brand { justify-content: center; margin-bottom: 24px; }
@@ -12,12 +12,12 @@ main { width: 100%; max-width: 520px; }
 
 /* Deliberately no unblock control: the page explains, it never shortens a block. */
 .block-card {
-  background: var(--panel); border: 1px solid var(--panel-border); border-top: 3px solid var(--gold);
+  background: var(--panel); border: 1px solid var(--panel-border); border-top: 3px solid var(--accent);
   border-radius: var(--radius-l); padding: 32px 36px; text-align: center;
 }
-.block-card.expired { border-top-color: var(--green); }
-.block-card.expired .badge { color: var(--green); }
-.badge { color: var(--gold); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; font-weight: 650; }
+.block-card.expired { border-top-color: var(--ok); }
+.block-card.expired .badge { color: var(--ok); }
+.badge { color: var(--accent); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; font-weight: 650; }
 h1 { font-size: clamp(22px, 5vw, 28px); letter-spacing: -0.4px; margin: 12px 0 8px; }
 .domain { color: var(--muted); font-size: 15px; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
 
@@ -26,19 +26,19 @@ h1 { font-size: clamp(22px, 5vw, 28px); letter-spacing: -0.4px; margin: 12px 0 8
   background: var(--bg); border: 1px solid var(--panel-border);
 }
 .countdown { padding: 18px 12px; }
-.countdown .label { display: block; color: var(--gold); font-size: 14px; margin-bottom: 4px; }
+.countdown .label { display: block; color: var(--accent); font-size: 14px; margin-bottom: 4px; }
 .countdown .time { display: block; font-size: 42px; font-weight: 600; letter-spacing: -1px; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .countdown .bar { max-width: 260px; margin: 14px auto 0; }
-.countdown .bar-fill { background: var(--gold); }
+.countdown .bar-fill { background: var(--accent); }
 .statement { padding: 18px 14px; font-size: 15px; }
-.statement.ok { color: var(--green); }
-.statement.warn { color: var(--amber); }
+.statement.ok { color: var(--ok); }
+.statement.warn { color: var(--warn); }
 
 .why { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin: 0 auto; max-width: 42ch; }
 .why:empty { display: none; }
 .lock-note {
   display: inline-flex; align-items: center; margin-top: 16px;
-  padding: 8px 12px; border-radius: 999px; background: var(--gold-soft); color: var(--gold); font-size: 13px; font-weight: 600;
+  padding: 8px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 600;
 }
 .actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 24px; }
 .actions .primary-action { font-size: 14px; }

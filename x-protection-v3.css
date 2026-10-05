@@ -1,3 +1,26 @@
+/* Custos colors for controls injected into X (Lapis palette). Prefixed so
+   X's own variables never collide. Greys that deliberately match X's
+   interface (quote author, collapsed handle) stay literal below. */
+:root {
+  --tabcloser-surface: #161b26;
+  --tabcloser-surface-raised: #1d2331;
+  --tabcloser-line: #2a3245;
+  --tabcloser-line-soft: #343d53;
+  --tabcloser-frame: #4c6298;
+  --tabcloser-button: #232a3a;
+  --tabcloser-button-hover: #2f3850;
+  --tabcloser-button-border: #46516b;
+  --tabcloser-button-text: #ffffff;
+  --tabcloser-hold-active: #2c3b63;
+  --tabcloser-secondary-border: #3a4458;
+  --tabcloser-secondary-text: #d5dbe8;
+  --tabcloser-text: #eef0f5;
+  --tabcloser-muted: #a5aec1;
+  --tabcloser-accent: #8fb0ff;
+  --tabcloser-focus: #afc6ff;
+  --tabcloser-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%234f73d6' d='M32 4 56 12.5v17C56 44.4 46.6 55 32 60 17.4 55 8 44.4 8 29.5v-17z'/%3E%3Cpath fill='none' stroke='%23f2f4f8' stroke-width='5.5' stroke-linecap='round' d='M17.5 27.5C21.5 34 26.5 37.5 32 37.5S42.5 34 46.5 27.5M22.5 34.4l-2.8 4.6M32 37.8v5.4M41.5 34.4l2.8 4.6'/%3E%3C/svg%3E");
+}
+
 /* Fail-closed hiding applies only in full (classifier) mode: media containers
    without a Custos verdict hide their direct children until verified. In
    labeled mode media shows unless X's own label protects it; before init (no
@@ -144,7 +167,7 @@
 }
 .tabcloser-media-overlay-art .tabcloser-overlay-label::before,
 .tabcloser-media-overlay-blur .tabcloser-overlay-label::before {
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23d9b66f' d='M8 1.5 2.5 3.5v4c0 3.3 2.3 5.9 5.5 7 3.2-1.1 5.5-3.7 5.5-7v-4z'/%3E%3C/svg%3E") center / contain no-repeat !important;
+  background: var(--tabcloser-mark) center / contain no-repeat !important;
   content: "" !important;
   flex: 0 0 auto !important;
   height: 12px !important;
@@ -187,25 +210,25 @@
 
 /* These controls remain independent from the artwork and X's navigation. */
 .tabcloser-controls {
-  color: #ece8df !important;
+  color: var(--tabcloser-text) !important;
   font: 13px/1.5 system-ui, sans-serif !important;
   text-shadow: none !important;
   pointer-events: auto !important;
 }
 .tabcloser-controls button {
   appearance: none !important;
-  background: #292a2e !important;
-  border: 1px solid #6c6556 !important;
+  background: var(--tabcloser-button) !important;
+  border: 1px solid var(--tabcloser-button-border) !important;
   border-radius: 7px !important;
-  color: #fff !important;
+  color: var(--tabcloser-button-text) !important;
   cursor: pointer !important;
   font: 600 12px/1.4 system-ui, sans-serif !important;
   padding: 7px 11px !important;
   margin: 3px !important;
   touch-action: none !important;
 }
-.tabcloser-controls button:hover:not(:disabled) { background: #414039 !important; }
-.tabcloser-controls button:focus-visible { outline: 2px solid #e9c77c !important; outline-offset: 2px !important; }
+.tabcloser-controls button:hover:not(:disabled) { background: var(--tabcloser-button-hover) !important; }
+.tabcloser-controls button:focus-visible { outline: 2px solid var(--tabcloser-focus) !important; outline-offset: 2px !important; }
 .tabcloser-controls button:disabled { opacity: .5 !important; cursor: default !important; }
 .tabcloser-media-actions { position: absolute !important; top: 8px !important; right: 8px !important; z-index: 3 !important; }
 /* "Why hidden?": the reason first, then the friction-heavy reveal. */
@@ -218,21 +241,21 @@
   max-height: 75vh !important;
   overflow: auto !important;
   padding: 0 !important;
-  border: 1px solid #8c7950 !important;
+  border: 1px solid var(--tabcloser-frame) !important;
   border-radius: 12px !important;
-  background: #17191d !important;
+  background: var(--tabcloser-surface) !important;
   box-shadow: 0 12px 40px #0009 !important;
   z-index: 2147483647 !important;
 }
 .tabcloser-panel-head {
   align-items: center !important;
-  border-bottom: 1px solid #2d2f34 !important;
+  border-bottom: 1px solid var(--tabcloser-line) !important;
   display: flex !important;
   gap: 8px !important;
   padding: 10px 12px 10px 14px !important;
 }
 .tabcloser-panel-head::before {
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23d9b66f' d='M8 1.5 2.5 3.5v4c0 3.3 2.3 5.9 5.5 7 3.2-1.1 5.5-3.7 5.5-7v-4z'/%3E%3C/svg%3E") center / contain no-repeat !important;
+  background: var(--tabcloser-mark) center / contain no-repeat !important;
   content: "" !important;
   height: 16px !important;
   width: 16px !important;
@@ -240,25 +263,25 @@
 .tabcloser-panel-head strong { flex: 1 !important; font-size: 14.5px !important; }
 .tabcloser-panel-head button { margin: 0 !important; padding: 4px 9px !important; }
 .tabcloser-panel-section { padding: 12px 14px !important; }
-.tabcloser-panel-section + .tabcloser-panel-section { border-top: 1px solid #2d2f34 !important; }
+.tabcloser-panel-section + .tabcloser-panel-section { border-top: 1px solid var(--tabcloser-line) !important; }
 .tabcloser-control-panel p { margin: 0 0 6px !important; }
-.tabcloser-control-panel h4 { font: 600 13px/1.4 system-ui, sans-serif !important; margin: 0 0 4px !important; color: #ece8df !important; }
+.tabcloser-control-panel h4 { font: 600 13px/1.4 system-ui, sans-serif !important; margin: 0 0 4px !important; color: var(--tabcloser-text) !important; }
 .tabcloser-kind {
-  color: #d9b66f !important;
+  color: var(--tabcloser-accent) !important;
   font-size: 11.5px !important;
   font-weight: 650 !important;
   letter-spacing: 0.3px !important;
   margin-bottom: 4px !important;
   text-transform: uppercase !important;
 }
-.tabcloser-control-note { color: #b3b6be !important; font-size: 12.5px !important; }
-.tabcloser-meter { background: #2d2f34 !important; border-radius: 3px !important; height: 5px !important; margin: 8px 0 6px !important; overflow: hidden !important; }
-.tabcloser-meter > div { background: #d9b66f !important; height: 100% !important; }
-.tabcloser-allowance { color: #b3b6be !important; font-size: 12.5px !important; font-variant-numeric: tabular-nums !important; }
+.tabcloser-control-note { color: var(--tabcloser-muted) !important; font-size: 12.5px !important; }
+.tabcloser-meter { background: var(--tabcloser-line) !important; border-radius: 3px !important; height: 5px !important; margin: 8px 0 6px !important; overflow: hidden !important; }
+.tabcloser-meter > div { background: var(--tabcloser-accent) !important; height: 100% !important; }
+.tabcloser-allowance { color: var(--tabcloser-muted) !important; font-size: 12.5px !important; font-variant-numeric: tabular-nums !important; }
 .tabcloser-controls .tabcloser-hold { display: block !important; font-size: 13.5px !important; margin: 10px 0 0 !important; padding: 10px 12px !important; width: 100% !important; }
-.tabcloser-controls .tabcloser-hold:active:not(:disabled) { background: #5a4f33 !important; }
-.tabcloser-controls .tabcloser-secondary { background: transparent !important; border-color: #4b4a45 !important; color: #d9d6cc !important; margin: 8px 0 0 !important; }
-.tabcloser-manual-text-notice { padding: 8px 10px !important; border-radius: 8px !important; background: #202328 !important; border: 1px solid #33363c !important; }
+.tabcloser-controls .tabcloser-hold:active:not(:disabled) { background: var(--tabcloser-hold-active) !important; }
+.tabcloser-controls .tabcloser-secondary { background: transparent !important; border-color: var(--tabcloser-secondary-border) !important; color: var(--tabcloser-secondary-text) !important; margin: 8px 0 0 !important; }
+.tabcloser-manual-text-notice { padding: 8px 10px !important; border-radius: 8px !important; background: var(--tabcloser-surface-raised) !important; border: 1px solid var(--tabcloser-line-soft) !important; }
 
 /* Like stays visibly unavailable on posts whose media is hidden. */
 html[data-tabcloser-block-like] article:has([data-tabcloser-media-state="protected"]) [data-testid="like"] {
@@ -288,7 +311,7 @@ article[data-tabcloser-collapse-revealed] > .tabcloser-collapsed-reply {
 }
 .tabcloser-collapsed-text { align-items: center !important; display: inline-flex !important; flex-wrap: wrap !important; gap: 6px !important; }
 .tabcloser-collapsed-text::before {
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23d9b66f' d='M8 1.5 2.5 3.5v4c0 3.3 2.3 5.9 5.5 7 3.2-1.1 5.5-3.7 5.5-7v-4z'/%3E%3C/svg%3E") center / contain no-repeat !important;
+  background: var(--tabcloser-mark) center / contain no-repeat !important;
   content: "" !important;
   height: 13px !important;
   width: 13px !important;
