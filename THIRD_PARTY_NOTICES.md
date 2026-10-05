@@ -6,7 +6,9 @@ The production extension includes these locally bundled dependencies:
 - **TensorFlow.js 4.22.0** — Apache License 2.0. Copyright The TensorFlow Authors. Source: <https://github.com/tensorflow/tfjs>
 - **TensorFlow.js WebAssembly backend 4.22.0** (`@tensorflow/tfjs-backend-wasm`, including its prebuilt `.wasm` binaries, which incorporate XNNPACK under the BSD 3-Clause License) — Apache License 2.0. Copyright The TensorFlow Authors. Source: <https://github.com/tensorflow/tfjs/tree/master/tfjs-backend-wasm>
 
-The complete corresponding license texts are available in each dependency's npm package and upstream repository. No dependency is loaded remotely at runtime.
+The full license texts ship with the extension in `licenses/` (`NSFWJS-MIT.txt`, `TensorFlow.js-Apache-2.0.txt`, `XNNPACK-BSD-3-Clause.txt`). TensorFlow.js publishes no NOTICE file. No dependency is loaded remotely at runtime.
+
+Custos itself is released under the MIT License (`LICENSE`).
 
 ## Replacement paintings
 

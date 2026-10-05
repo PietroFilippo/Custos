@@ -15,7 +15,7 @@ const staticFiles = [
   'common.js', 'theme.css',
   'manifest.json',
   'options.css', 'options.html', 'options.js',
-  'THIRD_PARTY_NOTICES.md',
+  'THIRD_PARTY_NOTICES.md', 'LICENSE',
   'popup.css', 'popup.html', 'popup.js',
   'x-media-utils.js', 'x-metadata.js', 'x-protection-v2.js', 'x-protection-v3.css', 'x-verdict.js',
   'x-user-controls.js', 'x-interactions.js', 'x-profile-protection.js',
@@ -38,6 +38,8 @@ await mkdir(dist, { recursive: true });
 await Promise.all(staticFiles.map(file => cp(path.join(root, file), path.join(dist, file))));
 await cp(path.join(root, 'data'), path.join(dist, 'data'), { recursive: true });
 await cp(path.join(root, 'icons'), path.join(dist, 'icons'), { recursive: true });
+// Full license texts of the bundled dependencies (the bundle strips comments).
+await cp(path.join(root, 'licenses'), path.join(dist, 'licenses'), { recursive: true });
 await cp(path.join(root, 'assets'), path.join(dist, 'assets'), { recursive: true });
 // WebAssembly fallback for the classifier when WebGL is unavailable. The
 // threaded build needs cross-origin isolation, which extension workers lack,
