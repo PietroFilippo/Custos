@@ -5,7 +5,7 @@ const adult = params.get('reason') === 'adult';
 
 const $ = id => document.getElementById(id);
 $('domain').textContent = domain;
-document.title = `${domain || 'Site'} blocked · TabCloser`;
+document.title = `${domain || 'Site'} blocked · Custos`;
 $('settings').addEventListener('click', () => browser.runtime.openOptionsPage());
 // The only exits are settings and leaving: nothing here shortens a block.
 $('closeTab').addEventListener('click', async () => {

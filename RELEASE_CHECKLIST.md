@@ -1,4 +1,4 @@
-# TabCloser 0.5.0 release checklist
+# Custos 0.5.0 release checklist
 
 ## Automated gates
 
@@ -20,13 +20,14 @@ This script does not evaluate video sampling/aggregation, live X labels or DOM b
 
 - Check the popup with 0, 1, 5, and 10 tracked sites, mixed paused/blocked sites, and long domains. Verify Show more/fewer, keyboard focus, scrolling, and the pinned settings button.
 - Check the protection overview with X tiers off, labels only, and classifier enabled; verify partial tier locks and expired locks. Check adult protection off, on, locked, and list unavailable. Timer counts must exclude disabled/duplicate domains and include enabled timers currently in cooldown.
-- In `about:addons`, check the scalable icon, TabCloser name, description, author, version, project link, and Preferences/Options route. Check toolbar icon readability in light/dark browser themes. The settings About section must match the manifest version.
+- In `about:addons`, check the scalable icon, Custos name, description, author, version, project link, and Preferences/Options route. Check toolbar icon readability in light/dark browser themes. The settings About section must match the manifest version.
 - Check the settings at-a-glance cards and side navigation lock chips against the real lock state. Open every `Lock…` popover with mouse and keyboard (presets, until a date, Escape, Cancel, errors for past dates); locked sections must show a banner with the exact end and time left instead of a lock control.
 - Check settings section links, keyboard focus, reduced motion, and narrow widths. Check the refreshed block page for a timer countdown, expired cooldown, adult-domain block, and list failure. No page may offer a lock bypass.
 - Open the popup on `blocked.html` and an internal browser page. The blocked domain should appear once with its cooldown; internal pages must never show an extension UUID as a site.
 - Switch between tracked sites/windows, reset an active timer, and let a timer expire. Only focused time should count; stale timeout/alarm notifications must not close a different site early.
 - Test parent/subdomain timer precedence, overlapping cooldowns, duplicate-domain validation, and locked-parent override prevention.
-- Test a clean install and upgrades from 0.2.0, 0.3.0, 0.4.0, and 0.4.1; rules, timers, blocks, X-protection state, and locks must survive. Upgraded installs switch to the blur cover until sacred art is turned on. Keep the existing `tabcloser@personal.local` ID.
+- Test a clean install under the new permanent ID `custos@pietrofilippo`; every new setting starts off and hidden media uses the blur cover. Installing next to an old `tabcloser@personal.local` copy must not share or overwrite its storage; remove the old copy before testing. From here on, keep the Custos ID unchanged so future upgrades preserve rules, locks, and manual hides.
+- In `about:addons`, the toolbar tooltip, the settings, popup, and block page titles, the right-click menu, and X notices must all say Custos.
 - With extension access to private windows denied, confirm the settings banner and popup note appear; with access allowed, confirm both disappear.
 - Test X Home, Search, TweetDetail, photo viewer, link-preview cards (large and small), single/multi-image tweets, GIFs, and videos. Card text and links must stay readable; only the preview image is covered.
 - Confirm hidden media uses the darkened blur by default and stays unrecognizable in the full-screen photo viewer (the radius scales with the cell). Toggle sacred art on and off during an active X lock: covers switch in place without reclassifying, and clicking blurred media opens Why hidden instead of a painting viewer.

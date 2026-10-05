@@ -1,7 +1,7 @@
 // X media coordinator. Modes: 'off'; 'labeled' hides only media X itself
 // marks mature; 'full' additionally classifies images, video posters, and up
 // to three frames from a detached low-bandwidth video probe. The visible X
-// player is never used, decoded, or seeked by TabCloser.
+// player is never used, decoded, or seeked by Custos.
 const xProtectionCoordinatorVersion = 'media-controls-v2';
 let mode = 'off';
 let settings = { replaceText: false, blockLike: false, sacredArt: false, sensitivity: 'balanced' };
@@ -36,7 +36,7 @@ const statusPathPattern = /\/status\/(\d+)(?:\/(?:photo|video)\/\d+)?/;
 const statusLinkSelector = 'a[href*="/status/"]';
 const extensionUiSelector = '.tabcloser-media-overlay, .tabcloser-lightbox, .tabcloser-controls';
 
-const xMetadataDebugPrefix = '[TabCloser DEBUG metadata-v1]';
+const xMetadataDebugPrefix = '[Custos DEBUG metadata-v1]';
 
 function xMetadataDebug(event, details = {}) {
   console.debug(xMetadataDebugPrefix, JSON.stringify({ event, ...details }));
@@ -555,7 +555,7 @@ function setRootState(root, state, reason) {
   overlay.setAttribute('role', 'group');
   overlay.setAttribute('aria-live', 'polite');
   const hiddenLabel = reason === 'manual' ? 'Hidden by you' : mature ? 'Sensitive media hidden' : 'Could not check media';
-  overlay.setAttribute('aria-label', shieldOnly ? 'Media is being checked by TabCloser' : hiddenLabel + ' by TabCloser');
+  overlay.setAttribute('aria-label', shieldOnly ? 'Media is being checked by Custos' : hiddenLabel + ' by Custos');
   overlay.textContent = '';
   if (artUrl) {
     // Two layers, one image: a blurred cover backdrop fills the letterbox

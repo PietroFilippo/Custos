@@ -42,7 +42,7 @@
     const reason = root.dataset.tabcloserMediaReason;
     if (reason === 'manual') return { kind: 'Hidden by you', text: 'You chose to hide this image or video. The choice is saved on this device.' };
     if (reason === 'metadata') return { kind: 'X label', text: 'X supplied a sensitive-content label or warning for this media, post, or author.' };
-    if (reason !== 'visual') return { kind: 'Could not check', text: 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while TabCloser retries when possible.' };
+    if (reason !== 'visual') return { kind: 'Could not check', text: 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while Custos retries when possible.' };
     const decision = TabCloserXCoordinator.decisionFor(root);
     if (!decision) return { kind: 'On-device classifier', text: 'The on-device model flagged this media during an earlier check in this page. Models can make mistakes.' };
     let text = 'The on-device model flagged the ' + decision.source + '.';
@@ -85,7 +85,7 @@
     element.textContent = text;
     return element;
   }
-  function messagePanel(text, title = 'TabCloser', kind = '') {
+  function messagePanel(text, title = 'Custos', kind = '') {
     closePanel();
     panel = document.createElement('section');
     panel.className = 'tabcloser-controls tabcloser-control-panel';
@@ -105,7 +105,7 @@
   function renderAllowance(result, root) {
     const available = Math.floor(Math.min(result.dailyMs || 0, result.postMs || 0));
     allowanceText.textContent = result.revealDailySec <= 0
-      ? 'Temporary reveals are off. Set a daily allowance in TabCloser settings.'
+      ? 'Temporary reveals are off. Set a daily allowance in Custos settings.'
       : result.dailyMs < 1
         ? 'Daily allowance used up. Reveals return at local midnight.'
         : result.postMs < 1
@@ -316,7 +316,7 @@
         messagePanel('Choose a post, image, or video with a stable X link. Avatars and profile banners are not supported by manual hiding yet.'); return;
       }
       send({ type: 'xControlHide', scope: message.scope, key }).then(result => {
-        if (result?.ok) { applySnapshot(result); messagePanel('Saved. This ' + (message.scope === 'text' ? 'post’s text' : 'image or video') + ' will stay hidden. Manage manual hides in TabCloser settings.'); }
+        if (result?.ok) { applySnapshot(result); messagePanel('Saved. This ' + (message.scope === 'text' ? 'post’s text' : 'image or video') + ' will stay hidden. Manage manual hides in Custos settings.'); }
         else messagePanel(result?.error || 'Unable to save the manual hide.');
       }).catch(() => messagePanel('Unable to save the manual hide.'));
     }

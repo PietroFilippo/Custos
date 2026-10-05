@@ -1,5 +1,5 @@
 /* Fail-closed hiding applies only in full (classifier) mode: media containers
-   without a TabCloser verdict hide their direct children until verified. In
+   without a Custos verdict hide their direct children until verified. In
    labeled mode media shows unless X's own label protects it; before init (no
    attribute yet) stay hidden. Only direct children are hidden so a nested
    media root (X nests videoPlayer inside videoComponent) can re-anchor its

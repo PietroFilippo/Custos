@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "TabCloser",
+  "name": "Custos",
   "version": "0.5.0",
   "description": "Set browsing time limits, block known adult websites, and hide sensitive media on X with on-device protection.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "tabcloser@personal.local",
+      "id": "custos@pietrofilippo",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": [
@@ -35,11 +35,11 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "icons": {
-    "16": "icons/tabcloser.svg",
-    "32": "icons/tabcloser.svg",
-    "48": "icons/tabcloser.svg",
-    "96": "icons/tabcloser.svg",
-    "128": "icons/tabcloser.svg"
+    "16": "icons/custos.svg",
+    "32": "icons/custos.svg",
+    "48": "icons/custos.svg",
+    "96": "icons/custos.svg",
+    "128": "icons/custos.svg"
   },
   "background": {
     "scripts": [
@@ -55,11 +55,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "TabCloser — browsing protection",
+    "default_title": "Custos — browsing protection",
     "default_icon": {
-      "16": "icons/tabcloser.svg",
-      "32": "icons/tabcloser.svg",
-      "48": "icons/tabcloser.svg"
+      "16": "icons/custos.svg",
+      "32": "icons/custos.svg",
+      "48": "icons/custos.svg"
     }
   },
   "options_ui": {

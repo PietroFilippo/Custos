@@ -1,6 +1,6 @@
-# TabCloser
+# Custos
 
-A Firefox / Zen browser add-on for browsing limits and content protection: timed site blocks, optional adult-site blocking, and local sensitive-media protection for X.
+*Formerly TabCloser.* A Firefox / Zen browser add-on for browsing limits and content protection: timed site blocks, optional adult-site blocking, and local sensitive-media protection for X.
 
 Current development version: **0.5.0**. See [Project status](docs/PROJECT_STATUS.md) for completed work, validation limits, and next steps.
 
@@ -39,8 +39,8 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 
 ## Usage
 
-- Click the TabCloser toolbar icon -> **Open settings** to add a site. The settings page opens with an at-a-glance summary of what is on and what is locked; every lock uses the same **Lock…** control with 1 hour, 1 day, 1 week, 30 days, or until-a-date presets.
-- If TabCloser is not allowed to run in private windows, the popup and settings say so. Allow it in `about:addons` -> TabCloser -> **Run in Private Windows** to keep protection there.
+- Click the Custos toolbar icon -> **Open settings** to add a site. The settings page opens with an at-a-glance summary of what is on and what is locked; every lock uses the same **Lock…** control with 1 hour, 1 day, 1 week, 30 days, or until-a-date presets.
+- If Custos is not allowed to run in private windows, the popup and settings say so. Allow it in `about:addons` -> Custos -> **Run in Private Windows** to keep protection there.
 - The protection overview shows the current X mode and tier locks, adult-site blocking (including list errors), and the number of enabled site timers. It displays your configuration; it is not a guarantee that every sensitive item is detected.
 - Each rule has: domain, close-after (minutes), block-after-close toggle + duration, enabled toggle.
 - The popup shows each site as counting, paused, or blocked. Blocked sites show a cooldown instead of a second, reset timer card. Long lists expand with **Show more**, and the settings button stays visible while scrolling.
@@ -50,17 +50,17 @@ Use this when iterating on the source. The add-on unloads on browser restart.
 - Choose an X protection level (**Off**, **X labels only**, or **Labels + on-device classifier** with a sensitivity) and use **Lock level…** to keep it from being lowered until expiry. X labels protect immediately. The classifier checks images and samples videos; a successful video check takes priority over a noisy thumbnail. Unavailable video checks fall back to the thumbnail, while image-check errors stay covered and retry.
 - Hidden media stays in place, heavily blurred and darkened, with a **Sensitive media hidden** notice. The blur radius scales with the media so the full-screen viewer is as unreadable as a thumbnail. Turn on **Cover hidden media with sacred art** to show a painting instead; this presentation switch stays editable during every lock.
 - Click **Why hidden?** (or blurred media itself) to see the reason, checked media type, and available model scores. Scores are model signals, not reliable probabilities.
-- Right-click a post or media on X and choose **TabCloser → hide this post’s text** or **hide this image / video**. Text gets a compact notice; artwork only replaces the selected media. Author details and post actions remain visible. Existing whole-post choices hide text and media individually, preserving their protection. Manual choices survive reloads and work with automatic protection off. Remove individual choices under **Manual hides** in settings, or through **Why hidden?**. Active X locks prevent removal.
+- Right-click a post or media on X and choose **Custos → hide this post’s text** or **hide this image / video**. Text gets a compact notice; artwork only replaces the selected media. Author details and post actions remain visible. Existing whole-post choices hide text and media individually, preserving their protection. Manual choices survive reloads and work with automatic protection off. Remove individual choices under **Manual hides** in settings, or through **Why hidden?**. Active X locks prevent removal.
 - Temporary reveals default **off**. Set a daily allowance in settings (for example, 30 seconds), then hold **Hold to reveal** inside **Why hidden?**. A post gets **three cumulative seconds per local calendar day**, shared across all its images and all tabs. Releasing the button/key, losing focus, navigating, or reaching the deadline hides it again. Videos remain paused and muted. Keyboard: focus the hold button and hold Space or Enter.
 - The background process reserves time before revealing and refunds unused time on a clean early release. Refreshes preserve usage; a crash or extension restart can consume the outstanding reservation. Local midnight replenishes the allowance; changing a setting never clears usage. The daily limit may decrease but cannot increase during either an active X lock or the independent **Lock allowance** period. Locking zero keeps reveals off. Locks cannot be shortened. Save feedback appears beside the allowance and clears after three seconds; exhausted reveals are disabled.
 
 ## Settings and add-on details
 
-TabCloser keeps its name, shield-and-clock icon, and charcoal/gold design. In 0.5.0 the settings page is a single column with at-a-glance status cards, a sticky section menu with lock badges, inline helper text instead of hover tooltips, and one lock control for every lockable setting. Locked sections show the exact end date and time left. The popup shows a one-line summary, a per-area overview with lock chips, and clearer site cards. The block page explains why a site is blocked, whether early unblock is locked, and offers **Close this tab**; it still has no unblock button. The About section shows the installed version, explains local processing and browser access, and links to usage instructions, issues, and third-party notices.
+Custos keeps the shield-and-clock icon and charcoal/gold design of TabCloser. In 0.5.0 the settings page is a single column with at-a-glance status cards, a sticky section menu with lock badges, inline helper text instead of hover tooltips, and one lock control for every lockable setting. Locked sections show the exact end date and time left. The popup shows a one-line summary, a per-area overview with lock chips, and clearer site cards. The block page explains why a site is blocked, whether early unblock is locked, and offers **Close this tab**; it still has no unblock button. The About section shows the installed version, explains local processing and browser access, and links to usage instructions, issues, and third-party notices.
 
-In Zen / Firefox, open `about:addons` → **Extensions** → **TabCloser** for its description, author, version, and project homepage. Use the extension's **Preferences** / **Options** action (the label and placement depend on the browser) to open the full settings tab. The surrounding add-on manager remains browser-owned.
+In Zen / Firefox, open `about:addons` → **Extensions** → **Custos** for its description, author, version, and project homepage. Use the extension's **Preferences** / **Options** action (the label and placement depend on the browser) to open the full settings tab. The surrounding add-on manager remains browser-owned.
 
-The extension ID `tabcloser@personal.local`, permissions, existing stored settings, locks, and classification policies are unchanged. New settings (sacred art, profile protection, SafeSearch) default off, so an upgraded install moves from paintings to the blur cover until sacred art is switched on. Source changes do not update a permanently installed XPI: use the temporary development install above to test 0.5.0, or install a newly signed release when available.
+**Coming from TabCloser:** 0.5.0 renames the add-on to Custos and gives it the permanent public ID `custos@pietrofilippo` (previously `tabcloser@personal.local`). Firefox treats a new ID as a separate add-on, so settings, rules, locks, and manual hides from TabCloser do not carry over: remove the old TabCloser add-on and set Custos up again. Permissions and classification policies are unchanged. New settings (sacred art, profile protection, SafeSearch) default off, so hidden media uses the blur cover until sacred art is switched on. Source changes do not update a permanently installed XPI: use the temporary development install above to test 0.5.0, or install a newly signed release when available.
 
 ## Adult-site protection
 
@@ -95,7 +95,7 @@ The supplied false-positive logs reproduce the previous decision patterns in reg
 | File | Role |
 |------|------|
 | `manifest.json` | MV3 manifest, permissions, entry points |
-| `theme.css`, `icons/tabcloser.svg` | Shared presentation and scalable shield-and-clock icon |
+| `theme.css`, `icons/custos.svg` | Shared presentation and scalable shield-and-clock icon |
 | `adult-sites.js`, `data/` | Local adult-domain matching and bundled list |
 | `common.js` | Shared helpers (domain matching, formatting) |
 | `background.js` | Focus tracking, auto-close, block enforcement |
@@ -109,7 +109,7 @@ The supplied false-positive logs reproduce the previous decision patterns in reg
 ## Notes
 
 - Storage lives in `browser.storage.local` — uninstalling clears all rules.
-- After editing source files, reload the add-on from `about:debugging` → TabCloser → **Reload**.
+- After editing source files, reload the add-on from `about:debugging` → Custos → **Reload**.
 - Re-run `npm run build` before reloading whenever classifier or protection source changes.
 - Timer cooldowns use navigation redirects. Adult-site blocking intercepts navigation before the network request proceeds; enabling it also redirects already-loaded matching tabs.
 - X media classification is entirely local. Media pixels and model scores are not uploaded or persisted.

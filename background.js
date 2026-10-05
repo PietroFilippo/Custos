@@ -33,7 +33,7 @@ function enqueueStateChange(work) {
     if (bootPromise) await bootPromise;
     return work();
   });
-  stateQueue = job.catch(error => console.warn('[TabCloser] State update failed', error));
+  stateQueue = job.catch(error => console.warn('[Custos] State update failed', error));
   return job;
 }
 
@@ -165,13 +165,13 @@ async function ensureXContentScriptInTab(tab) {
       target: { tabId: tab.id },
       files: xContentScriptFiles,
     });
-    console.debug('[TabCloser DEBUG lifecycle-v1]', JSON.stringify({
+    console.debug('[Custos DEBUG lifecycle-v1]', JSON.stringify({
       event: 'existing-tab-restored',
       tabId: tab.id,
       version: xContentScriptVersion,
     }));
   } catch (error) {
-    console.warn('[TabCloser] Could not restore X protection in an existing tab', {
+    console.warn('[Custos] Could not restore X protection in an existing tab', {
       tabId: tab.id,
       error: String(error?.message || error),
     });
@@ -183,7 +183,7 @@ async function ensureExistingXTabsProtected() {
   try {
     tabs = await browser.tabs.query({ url: xTabUrlPatterns });
   } catch (error) {
-    console.warn('[TabCloser] Could not find existing X tabs for protection restoration', {
+    console.warn('[Custos] Could not find existing X tabs for protection restoration', {
       error: String(error?.message || error),
     });
     return;
@@ -445,7 +445,7 @@ browser.webNavigation.onBeforeNavigate.addListener(details => enqueueStateChange
 
 
 // === X / Twitter sensitive-media metadata ===
-const xMetadataDebugPrefix = '[TabCloser DEBUG metadata-v1]';
+const xMetadataDebugPrefix = '[Custos DEBUG metadata-v1]';
 
 function focalTweetIdFromXGraphqlUrl(value) {
   try {
@@ -754,7 +754,7 @@ async function classifyXMedia(msg, sender) {
       const timedOut = /timeout|aborted/i.test(error?.message || error?.name || '');
       if (timedOut) xClassifierDiagnostics.timeouts += 1;
       else xClassifierDiagnostics.errors += 1;
-      console.warn('[TabCloser] X media classification failed; protecting media', {
+      console.warn('[Custos] X media classification failed; protecting media', {
         kind: msg.kind,
         mediaKey: mediaKey.slice(0, 160),
         error: error?.message || String(error),
@@ -792,7 +792,7 @@ async function notifyXControls() {
 async function handleXControlMessage(msg, sender) {
   const fromX = Number.isInteger(sender?.tab?.id) && isXPageUrl(sender?.tab?.url || sender.url || '');
   const fromSettings = sender?.url?.split(/[?#]/)[0] === browser.runtime.getURL('options.html');
-  if (!fromX && !fromSettings) return { ok: false, error: 'Unavailable outside X or TabCloser settings.' };
+  if (!fromX && !fromSettings) return { ok: false, error: 'Unavailable outside X or Custos settings.' };
   if (msg.type === 'xControlGet') return { ok: true, ...xControlSnapshot(msg.postId) };
   if (msg.type === 'xControlHide' || msg.type === 'xControlRemove') {
     const valid = ['post', 'text'].includes(msg.scope) ? TabCloserXUserControls.validPost(msg.key) : msg.scope === 'media' && TabCloserXUserControls.validMedia(msg.key);
@@ -834,8 +834,8 @@ async function handleXControlMessage(msg, sender) {
 // Menus persist across MV3 event-page restarts; create only on installation/update.
 browser.runtime.onInstalled?.addListener(async () => {
   await browser.menus.removeAll();
-  browser.menus.create({ id: 'tabcloser-hide-text', title: 'TabCloser: hide this post’s text', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
-  browser.menus.create({ id: 'tabcloser-hide-media', title: 'TabCloser: hide this image / video', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
+  browser.menus.create({ id: 'tabcloser-hide-text', title: 'Custos: hide this post’s text', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
+  browser.menus.create({ id: 'tabcloser-hide-media', title: 'Custos: hide this image / video', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
 });
 browser.menus?.onClicked.addListener((info, tab) => {
   if (!['tabcloser-hide-text', 'tabcloser-hide-media'].includes(info.menuItemId) || !Number.isInteger(tab?.id)) return;
@@ -868,7 +868,7 @@ async function handleMessage(msg, sender) {
       };
     }
     case 'saveAdultSites': {
-      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to change this protection.' };
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to change this protection.' };
       if (typeof msg.enabled !== 'boolean' || (msg.safeSearch != null && typeof msg.safeSearch !== 'boolean')) return { ok: false, error: 'Invalid adult-site setting.' };
       if (!msg.enabled && isLockActive(state.adultSites.lockUntil)) return { ok: false, error: 'Adult-site protection is locked until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
       // SafeSearch shares the adult-site lock: it can be added, never removed early.
@@ -884,7 +884,7 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
     case 'lockAdultSites': {
-      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to lock this protection.' };
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to lock this protection.' };
       const durationSec = Math.round(Number(msg.durationSec));
       const until = Date.now() + durationSec * 1000;
       if (!state.adultSites.enabled || !adultList || !Number.isFinite(durationSec) || durationSec < 60 || !Number.isSafeInteger(until) || until > 8640000000000000) return { ok: false, error: 'Enable adult-site protection and choose at least one minute.' };
@@ -1003,7 +1003,7 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
     case 'saveXProfile': {
-      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to change profile protection.' };
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to change profile protection.' };
       const current = state.xProtection.profile;
       const change = {};
       if (msg.images != null) {

@@ -144,7 +144,7 @@
         const computed = getComputedStyle(name);
         const alias = document.createElement('span');
         alias.className = 'tabcloser-alias';
-        alias.title = 'Name hidden by TabCloser';
+        alias.title = 'Name hidden by Custos';
         alias.textContent = aliasFor(handle);
         alias.style.fontSize = computed.fontSize;
         alias.style.fontWeight = computed.fontWeight;
