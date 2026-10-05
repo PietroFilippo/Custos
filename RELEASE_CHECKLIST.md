@@ -1,4 +1,4 @@
-# TabCloser 0.4.1 release checklist
+# TabCloser 0.5.0 release checklist
 
 ## Automated gates
 
@@ -21,24 +21,32 @@ This script does not evaluate video sampling/aggregation, live X labels or DOM b
 - Check the popup with 0, 1, 5, and 10 tracked sites, mixed paused/blocked sites, and long domains. Verify Show more/fewer, keyboard focus, scrolling, and the pinned settings button.
 - Check the protection overview with X tiers off, labels only, and classifier enabled; verify partial tier locks and expired locks. Check adult protection off, on, locked, and list unavailable. Timer counts must exclude disabled/duplicate domains and include enabled timers currently in cooldown.
 - In `about:addons`, check the scalable icon, TabCloser name, description, author, version, project link, and Preferences/Options route. Check toolbar icon readability in light/dark browser themes. The settings About section must match the manifest version.
+- Check the settings at-a-glance cards and side navigation lock chips against the real lock state. Open every `Lock…` popover with mouse and keyboard (presets, until a date, Escape, Cancel, errors for past dates); locked sections must show a banner with the exact end and time left instead of a lock control.
 - Check settings section links, keyboard focus, reduced motion, and narrow widths. Check the refreshed block page for a timer countdown, expired cooldown, adult-domain block, and list failure. No page may offer a lock bypass.
 - Open the popup on `blocked.html` and an internal browser page. The blocked domain should appear once with its cooldown; internal pages must never show an extension UUID as a site.
 - Switch between tracked sites/windows, reset an active timer, and let a timer expire. Only focused time should count; stale timeout/alarm notifications must not close a different site early.
 - Test parent/subdomain timer precedence, overlapping cooldowns, duplicate-domain validation, and locked-parent override prevention.
-- Test a clean install and upgrades from 0.2.0, 0.3.0, and 0.4.0; rules, timers, blocks, X-protection state, and locks must survive. Keep the existing `tabcloser@personal.local` ID.
-- Test X Home, Search, TweetDetail, photo viewer, cards, single/multi-image tweets, GIFs, and videos.
+- Test a clean install and upgrades from 0.2.0, 0.3.0, 0.4.0, and 0.4.1; rules, timers, blocks, X-protection state, and locks must survive. Upgraded installs switch to the blur cover until sacred art is turned on. Keep the existing `tabcloser@personal.local` ID.
+- With extension access to private windows denied, confirm the settings banner and popup note appear; with access allowed, confirm both disappear.
+- Test X Home, Search, TweetDetail, photo viewer, link-preview cards (large and small), single/multi-image tweets, GIFs, and videos. Card text and links must stay readable; only the preview image is covered.
+- Confirm hidden media uses the darkened blur by default and stays unrecognizable in the full-screen photo viewer (the radius scales with the cell). Toggle sacred art on and off during an active X lock: covers switch in place without reclassifying, and clicking blurred media opens Why hidden instead of a painting viewer.
 - Repeat known misses in the verified X account used for current testing. Record the account state, active sensitivity preset, and diagnostic version. Compare VPN on/off only when investigating a reproducible regional or metadata difference; VPN state alone is not a substitute for testing a verified account.
 - Confirm X-labelled media blocks without waiting for local inference.
 - Confirm safe media remains hidden while pending and becomes visible only after a safe verdict.
 - Confirm X-labelled and model-flagged media remain protected. Image-check failures should stay covered and retry. Unavailable/incomplete video checks must retain a flagged thumbnail; absent/unreadable thumbnails alone do not protect a video.
 - Recheck the Coltrane false-positive post `2101422716305744244`: a thumbnail score near 0.83 must no longer end the check before video sampling. Verify its real sampled frames as well as known mature-video cases; mocked safe-frame tests do not establish corpus accuracy.
-- Check Why hidden for X labels, individual images, video frames, thumbnail fallback, manual choices, and failures. Clicking controls must not navigate or open the painting viewer.
+- Check Why hidden for X labels, individual images, video frames, thumbnail fallback, manual choices, flagged-account replies, and failures. Clicking controls must not navigate or open the painting viewer.
+- Profile protection: with "Flagged accounts only", confirm pictures and banners of accounts X flags as sensitive are blurred in timelines, replies, hover cards, follow lists, DMs, and profile pages, and nobody else's are. With "Everyone except accounts I follow", confirm every unfollowed picture is blurred, followed unflagged accounts and your own picture stay clear, and a followed flagged account stays blurred. Verify where X currently delivers the following flag, avatar, and banner fields in live responses.
+- Replace display names: check the plain and virtue aliases in posts, user cells, hover cards, the profile header, and the profile tab title; the same account keeps the same virtue everywhere; handles stay visible. Explicit name/bio markers only count when that option is on.
+- Collapse replies: on a conversation, replies from flagged accounts fold into one line, the focal post never folds, Show… opens Why hidden, and the hold reveal uses the shared allowance. Timelines never fold.
+- Reload X and confirm no account flag survives; inspect extension storage to confirm no account list is saved. Under an X lock, profile settings may only tighten while the alias style stays editable.
 - Right-click-hide one image and, separately, a post’s text. Confirm author details, timestamps, and actions remain visible. Verify legacy whole-post choices hide media/text without an article-wide painting. Verify persistence, timeline/detail views, quoted-post isolation, removal, and automatic protection off. Locks must prevent removing manual hides.
 - Configure 4 seconds/day and reveal two different posts: at most 3 seconds on the first and 1 on the second. Repeat a hold after early release, refresh, restart, and use concurrent tabs. No action may reset usage except the next local calendar day.
 - During a reveal test release, blur, tab changes, navigation, DOM remounts, and the deadline. Text and media must rehide; videos must never autoplay. Check pointer and keyboard holds.
 - Independently lock the reveal allowance with X tiers unlocked, including allowance zero. Reload/restart, try increasing or shortening the lock, lower the allowance, and verify expiry. Save feedback must clear locally; zero time disables pointer and keyboard holds, and available post time must not exceed the daily remainder.
 - Enable adult-site protection with multiple matching tabs open. Check HTTP/HTTPS, subdomains, embedded frames, back/forward navigation, lookalike domains, and unrelated sites. Lock, reload/restart, attempt disabling/shortening, and check expiry leaves protection enabled. Test the bundled-list error page and settings recovery.
-- Confirm the popup identifies an adult block instead of saying the timer cooldown expired. Check the settings and block page at narrow widths.
+- Confirm the popup identifies an adult block instead of saying the timer cooldown expired. Check the settings and block page at narrow widths. The block page must say why the site is blocked, show the early-unblock lock when one applies, close its own tab with Close this tab, and never offer a way back before the cooldown ends.
+- Enable SafeSearch and search Google (including a country domain and image search), Bing images, DuckDuckGo, and Brave Search; each must load with its strict filter even after choosing a looser filter in the engine's own UI. Lock adult-site protection and confirm SafeSearch cannot be switched off until expiry.
 - Recheck the five reported video cases listed in `docs/PROJECT_STATUS.md` under Lenient, plus known mature-video cases. Confirm strong repeated evidence still blocks and incomplete video checks retain flagged thumbnails. Compare Balanced/Strict behavior.
 - Confirm an active X lock prevents increasing/enabling the reveal allowance but allows lowering it. Disabling/re-enabling never refills the allowance.
 - Confirm disabling unlocked protection restores pending/protected DOM and a lock prevents disabling.

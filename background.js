@@ -3,7 +3,7 @@ const state = {
   rules: [],          // [{ id, domain, closeAfterSec, blockAfterClose, blockDurationSec, enabled }]
   accumSec: {},       // { [normalizedDomain]: accumulated active seconds }
   blocks: {},         // { [normalizedDomain]: { until: epochMs } }
-  adultSites: { enabled: false, lockUntil: null },
+  adultSites: { enabled: false, lockUntil: null, safeSearch: false },
   // Two tiers: 'labeled' hides only media X itself marks mature; 'model' adds
   // the on-device classifier. model implies labeled (enable and lock).
   xProtection: {
@@ -11,8 +11,10 @@ const state = {
     model: { enabled: false, lockUntil: null, sensitivity: 'balanced' },
     replaceText: false, // swap censored post text for a Catholic quote
     blockLike: false,   // prevent liking posts whose media is censored
+    sacredArt: false,   // presentation only: cover hidden media with a painting instead of the blur
     revealDailySec: 0,  // opt-in; shared across all X tabs
     revealLockUntil: null,
+    profile: null,      // see normalizeXProfile
   },
   focus: { tabId: null, domain: null, enteredAt: null }, // not persisted
 };
@@ -46,7 +48,11 @@ async function loadState() {
   state.rules = data.rules ?? [];
   state.accumSec = data.accumSec ?? {};
   state.blocks = data.blocks ?? {};
-  state.adultSites = { enabled: data.adultSites?.enabled === true, lockUntil: finiteOrNull(data.adultSites?.lockUntil) };
+  state.adultSites = {
+    enabled: data.adultSites?.enabled === true,
+    lockUntil: finiteOrNull(data.adultSites?.lockUntil),
+    safeSearch: data.adultSites?.safeSearch === true,
+  };
   const raw = data.xProtection ?? {};
   // Migrate the legacy single-toggle shape { enabled, disableLockedUntil }.
   const legacyEnabled = raw.enabled === true;
@@ -63,8 +69,10 @@ async function loadState() {
     },
     replaceText: raw.replaceText === true,
     blockLike: raw.blockLike === true,
+    sacredArt: raw.sacredArt === true,
     revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
+    profile: normalizeXProfile(raw.profile),
   };
   // Obsolete learning data is optional cleanup and must never abort startup.
   browser.storage.local.remove(['xSensitiveTweetCache', 'xRestrictedAuthorCache']).catch(() => {});
@@ -72,6 +80,27 @@ async function loadState() {
 
 // Higher rank censors more; loosening is refused while the model tier is locked.
 const SENSITIVITY_RANK = { lenient: 0, balanced: 1, strict: 2 };
+
+// Profile protection works from account flags kept only in the X page's
+// memory. Image scope applies to pictures and banners; names and reply
+// collapse only ever apply to flagged accounts.
+const PROFILE_IMAGE_RANK = { off: 0, flagged: 1, everyone: 2 };
+const PROFILE_SWITCHES = ['avatars', 'banners', 'markers', 'names', 'collapse'];
+function normalizeXProfile(raw) {
+  return {
+    images: PROFILE_IMAGE_RANK[raw?.images] != null ? raw.images : 'off',
+    avatars: raw?.avatars !== false,
+    banners: raw?.banners !== false,
+    markers: raw?.markers === true,
+    names: raw?.names === true,
+    alias: raw?.alias === 'plain' ? 'plain' : 'virtue',
+    collapse: raw?.collapse === true,
+  };
+}
+function xProfileActive() {
+  const profile = state.xProtection.profile;
+  return !!profile && ((profile.images !== 'off' && (profile.avatars || profile.banners)) || profile.names || profile.collapse);
+}
 
 const xContentScriptVersion = 'media-controls-v2';
 const xTabUrlPatterns = [
@@ -90,6 +119,7 @@ const xContentScriptFiles = [
   'catholic-quotes.js',
   'x-protection-v2.js',
   'x-interactions.js',
+  'x-profile-protection.js',
 ];
 
 async function persist() {
@@ -193,6 +223,33 @@ async function enforceAdultSites() {
   }));
 }
 
+// SafeSearch: search engines always get their strictest filter parameter,
+// including image and video search. Returns a redirect URL, or null when the
+// request already asks for it. DuckDuckGo's HTML and Lite versions post the
+// query in the form body, so it is carried into the redirect URL.
+const safeSearchRules = [
+  { host: /^(?:www\.)?google\.(?:com|[a-z]{2,3}|com?\.[a-z]{2})$/, path: /^\/search$/, key: 'safe', value: 'active' },
+  { host: /^(?:www\.)?bing\.com$/, path: /^\/(?:images\/|videos\/)?search$/, key: 'adlt', value: 'strict' },
+  { host: /^(?:html\.|lite\.)?duckduckgo\.com$/, path: /^\/(?:html\/?|lite\/?)?$/, key: 'kp', value: '1', needsQuery: true },
+  { host: /^search\.brave\.com$/, path: /^\/(?:search|images|videos|news)$/, key: 'safesearch', value: 'strict' },
+];
+function safeSearchUrl(value, formData) {
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  const host = url.hostname.toLowerCase();
+  const rule = safeSearchRules.find(candidate => candidate.host.test(host) && candidate.path.test(url.pathname));
+  if (!rule) return null;
+  if (rule.needsQuery && !url.searchParams.has('q')) {
+    const postedQuery = formData?.q?.[0];
+    if (typeof postedQuery !== 'string' || !postedQuery) return null;
+    url.searchParams.set('q', postedQuery);
+  } else if (url.searchParams.get(rule.key) === rule.value) {
+    return null;
+  }
+  url.searchParams.set(rule.key, rule.value);
+  return url.href;
+}
+
 // Firefox holds navigation while the event page loads its bundled list. Do not
 // enqueue this on stateQueue: a pending settings/tabs update may depend on it.
 browser.webRequest.onBeforeRequest.addListener(async details => {
@@ -200,12 +257,14 @@ browser.webRequest.onBeforeRequest.addListener(async details => {
   if (!state.adultSites.enabled) return {};
   const domain = adultSiteDomain(details.url);
   if (domain) return details.type === 'sub_frame' ? { cancel: true } : { redirectUrl: adultBlockedUrl(domain) };
+  const safeSearch = state.adultSites.safeSearch && details.type === 'main_frame' ? safeSearchUrl(details.url, details.requestBody?.formData) : null;
+  if (safeSearch) return { redirectUrl: safeSearch };
   // A broken installed list must not silently disable an active locked policy.
   if (!adultList && !await loadAdultList()) return details.type === 'sub_frame'
     ? { cancel: true } : { redirectUrl: adultBlockedUrl(hostFromUrl(details.url) || '') + '&unavailable=1' };
   const retried = adultSiteDomain(details.url);
   return retried ? details.type === 'sub_frame' ? { cancel: true } : { redirectUrl: adultBlockedUrl(retried) } : {};
-}, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['blocking']);
+}, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['blocking', 'requestBody']);
 
 function findBlock(host) {
   return activeBlockForHost(state.blocks, host);
@@ -407,9 +466,9 @@ function sendXMetadataDiagnostic(tabId, event, details = {}) {
   }).catch(() => {});
 }
 
-// Only operations that can carry tweet/media payloads are worth parsing; misses
-// simply fall back to the poster classifier.
-const xTweetOperationPattern = /Timeline|Tweet|Search|Bookmark|Media|Conversation|List|Detail|Likes|Explore/i;
+// Only operations that can carry tweet/media or account payloads are worth
+// parsing; misses simply fall back to the poster classifier.
+const xTweetOperationPattern = /Timeline|Tweet|Search|Bookmark|Media|Conversation|List|Detail|Likes|Explore|User|Follow|Retweeters|Favoriters|Community|Viewer/i;
 const maxCapturedXGraphqlBytes = 8 * 1024 * 1024;
 
 function observeXGraphqlResponse(details) {
@@ -418,7 +477,8 @@ function observeXGraphqlResponse(details) {
   if (!xTweetOperationPattern.test(operation)) return;
   const focalTweetId = focalTweetIdFromXGraphqlUrl(details.url);
   const debug = /TweetDetail/i.test(operation);
-  if (!state.xProtection.labeled.enabled) {
+  const profileActive = xProfileActive();
+  if (!state.xProtection.labeled.enabled && !profileActive) {
     if (debug) sendXMetadataDiagnostic(details.tabId, 'intercept-skipped', {
       operation,
       focalTweetId,
@@ -477,6 +537,8 @@ function observeXGraphqlResponse(details) {
         TabCloserXMetadata.extractDirectVideoSources(payload);
       const extractedTweetIds = [...metadata.tweetIds];
       const regionalTweetIds = TabCloserXMetadata.extractAgeVerificationTweetIds(payload);
+      // Account flags go only to this tab's page memory; nothing is stored.
+      metadata.accounts = profileActive ? TabCloserXMetadata.extractAccounts(payload) : [];
       if (debug) sendXMetadataDiagnostic(details.tabId, 'intercept-complete', {
         operation,
         focalTweetId,
@@ -488,7 +550,7 @@ function observeXGraphqlResponse(details) {
         directVideoSourceCount: Object.keys(metadata.videoSourcesByTweetId).length,
         signals: TabCloserXMetadata.summarizeSensitivitySignals(payload, focalTweetId),
       });
-      if (metadata.urls.length || metadata.tweetIds.length ||
+      if (metadata.urls.length || metadata.tweetIds.length || metadata.accounts.length ||
           Object.keys(metadata.videoSourcesByTweetId).length) {
         await browser.tabs.sendMessage(details.tabId, { type: 'xSensitiveMediaMetadata', metadata });
       }
@@ -807,10 +869,15 @@ async function handleMessage(msg, sender) {
     }
     case 'saveAdultSites': {
       if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to change this protection.' };
-      if (typeof msg.enabled !== 'boolean') return { ok: false, error: 'Invalid adult-site setting.' };
+      if (typeof msg.enabled !== 'boolean' || (msg.safeSearch != null && typeof msg.safeSearch !== 'boolean')) return { ok: false, error: 'Invalid adult-site setting.' };
       if (!msg.enabled && isLockActive(state.adultSites.lockUntil)) return { ok: false, error: 'Adult-site protection is locked until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
+      // SafeSearch shares the adult-site lock: it can be added, never removed early.
+      if (msg.safeSearch === false && state.adultSites.safeSearch && isLockActive(state.adultSites.lockUntil)) {
+        return { ok: false, error: 'SafeSearch is locked with adult-site protection until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
+      }
       if (msg.enabled && !await loadAdultList()) return { ok: false, error: adultListError };
       state.adultSites.enabled = msg.enabled;
+      if (typeof msg.safeSearch === 'boolean') state.adultSites.safeSearch = msg.safeSearch;
       await persist();
       await enforceAdultSites();
       await handleFocusChange();
@@ -893,10 +960,12 @@ async function handleMessage(msg, sender) {
       return { ok: true, until };
     }
     case 'saveXProtection': {
-      // model implies labeled: requesting the model tier turns labeled on too.
-      const modelEnabled = msg.model === true;
-      const labeledEnabled = msg.labeled === true || modelEnabled;
       const current = state.xProtection;
+      // model implies labeled: requesting the model tier turns labeled on too.
+      // An omitted tier keeps its current value, so presentation-only saves
+      // (sacred art) can never switch protection off as a side effect.
+      const modelEnabled = typeof msg.model === 'boolean' ? msg.model : current.model.enabled;
+      const labeledEnabled = (typeof msg.labeled === 'boolean' ? msg.labeled : current.labeled.enabled) || modelEnabled;
       if (msg.revealDailySec != null) {
         if (!Number.isInteger(msg.revealDailySec) || msg.revealDailySec < 0 || msg.revealDailySec > 3600) {
           return { ok: false, error: 'Choose a daily allowance from 0 to 3600 seconds.' };
@@ -924,10 +993,42 @@ async function handleMessage(msg, sender) {
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
+      // Presentation only: the painting and the blur hide the same media, so
+      // this stays editable during every lock.
+      if (typeof msg.sacredArt === 'boolean') current.sacredArt = msg.sacredArt;
       if (modelEnabled) TabCloserClassifier.warmUp();
       await persist();
       await notifyXProtection();
       await notifyXControls();
+      return { ok: true };
+    }
+    case 'saveXProfile': {
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to change profile protection.' };
+      const current = state.xProtection.profile;
+      const change = {};
+      if (msg.images != null) {
+        if (PROFILE_IMAGE_RANK[msg.images] == null) return { ok: false, error: 'Unknown profile image scope.' };
+        change.images = msg.images;
+      }
+      for (const key of PROFILE_SWITCHES) {
+        if (msg[key] == null) continue;
+        if (typeof msg[key] !== 'boolean') return { ok: false, error: 'Invalid profile protection setting.' };
+        change[key] = msg[key];
+      }
+      if (msg.alias != null) {
+        if (!['plain', 'virtue'].includes(msg.alias)) return { ok: false, error: 'Unknown alias style.' };
+        change.alias = msg.alias;
+      }
+      const next = normalizeXProfile({ ...current, ...change });
+      // Under an X lock profile protection may only tighten. The alias style
+      // is presentation and stays free.
+      if (xControlsLocked() && (PROFILE_IMAGE_RANK[next.images] < PROFILE_IMAGE_RANK[current.images] ||
+          PROFILE_SWITCHES.some(key => current[key] && !next[key]))) {
+        return { ok: false, error: 'Profile protection can only get stricter while X protection is locked.' };
+      }
+      state.xProtection.profile = next;
+      await persist();
+      await notifyXProtection();
       return { ok: true };
     }
     case 'lockXReveal': {

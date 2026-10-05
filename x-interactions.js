@@ -3,7 +3,7 @@
 (() => {
   let snapshot = { posts: [], media: [], revealDailySec: 0, locked: false };
   let posts = new Set(), texts = new Set(), media = new Set();
-  let contextTarget = null, panel = null, panelRoot = null, allowanceText = null, holdButton = null;
+  let contextTarget = null, panel = null, panelRoot = null, allowanceText = null, holdButton = null, meter = null;
   let holding = false, requestGeneration = 0, lease = null, revealTimer = null, refreshTimer = null;
   let allowanceTimer = null;
   let revealStarted = 0, revealDuration = 0, revealPage = '';
@@ -34,14 +34,17 @@
       });
     }
   }
+  // The reason section of "Why hidden?": a short kind label plus the detail.
   function explanation(root) {
-    if (textHidden(root)) return 'You chose to hide this post’s text. The choice is saved on this device.';
+    if (textHidden(root)) return { kind: 'Hidden by you', text: 'You chose to hide this post’s text. The choice is saved on this device.' };
+    const profile = globalThis.TabCloserXProfile?.explain?.(root);
+    if (profile) return profile;
     const reason = root.dataset.tabcloserMediaReason;
-    if (reason === 'manual') return 'You chose to hide this image or video. The choice is saved on this device.';
-    if (reason === 'metadata') return 'X supplied a sensitive-content label or warning for this media, post, or author.';
-    if (reason !== 'visual') return 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while TabCloser retries when possible.';
+    if (reason === 'manual') return { kind: 'Hidden by you', text: 'You chose to hide this image or video. The choice is saved on this device.' };
+    if (reason === 'metadata') return { kind: 'X label', text: 'X supplied a sensitive-content label or warning for this media, post, or author.' };
+    if (reason !== 'visual') return { kind: 'Could not check', text: 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while TabCloser retries when possible.' };
     const decision = TabCloserXCoordinator.decisionFor(root);
-    if (!decision) return 'The on-device model flagged this media during an earlier check in this page. Models can make mistakes.';
+    if (!decision) return { kind: 'On-device classifier', text: 'The on-device model flagged this media during an earlier check in this page. Models can make mistakes.' };
     let text = 'The on-device model flagged the ' + decision.source + '.';
     if (Number.isFinite(decision.adultScore)) text += ' Score ' + decision.adultScore.toFixed(3) + ', cutoff ' + decision.threshold.toFixed(2) + ' (' + decision.sensitivity + ').';
     if (decision.frames?.length) {
@@ -50,7 +53,7 @@
         decision.frames.map(frame => frame.t + 's: ' + frame.squash + (frame.crop == null ? '' : ' / crop ' + frame.crop)).join('; ') + '.';
     }
     if (decision.fallback) text += ' ' + decision.fallback + '; the thumbnail was used as a fallback.';
-    return text + ' Scores are model signals, not certainty. Harmless media can be flagged.';
+    return { kind: 'On-device classifier', text: text + ' Scores are model signals, not certainty. Harmless media can be flagged.' };
   }
   function decorate(root, state) {
     if (state !== 'protected') return;
@@ -67,19 +70,35 @@
     stopReveal();
     clearInterval(allowanceTimer); allowanceTimer = null;
     const previousRoot = panelRoot;
-    panel?.remove(); panel = null; panelRoot = null; holdButton = null; allowanceText = null;
+    panel?.remove(); panel = null; panelRoot = null; holdButton = null; allowanceText = null; meter = null;
     (manualTexts.get(previousRoot) || overlayFor(previousRoot || document.documentElement))?.querySelector('button')?.focus();
   }
-  function messagePanel(text) {
+  function panelSection(...children) {
+    const section = document.createElement('div');
+    section.className = 'tabcloser-panel-section';
+    section.append(...children);
+    return section;
+  }
+  function paragraph(text, className) {
+    const element = document.createElement('p');
+    if (className) element.className = className;
+    element.textContent = text;
+    return element;
+  }
+  function messagePanel(text, title = 'TabCloser', kind = '') {
     closePanel();
     panel = document.createElement('section');
     panel.className = 'tabcloser-controls tabcloser-control-panel';
     isolateControls(panel);
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'TabCloser');
-    const title = document.createElement('strong'); title.textContent = 'TabCloser';
-    const content = document.createElement('p'); content.textContent = text;
-    panel.append(title, button('Close', closePanel), content);
+    panel.setAttribute('aria-label', title);
+    const head = document.createElement('header');
+    head.className = 'tabcloser-panel-head';
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    head.append(heading, button('Close', closePanel));
+    const label = kind ? paragraph(kind, 'tabcloser-kind') : null;
+    panel.append(head, panelSection(...[label, paragraph(text)].filter(Boolean)));
     document.documentElement.appendChild(panel);
     panel.querySelector('button').focus();
   }
@@ -91,7 +110,8 @@
         ? 'Daily allowance used up. Reveals return at local midnight.'
         : result.postMs < 1
           ? 'This post has used its three seconds today. It can be revealed again after local midnight.'
-          : 'Up to ' + seconds(available) + 's available for this post · ' + seconds(result.dailyMs) + 's remaining today. Resets at local midnight.';
+          : seconds(available) + ' s left for this post · ' + seconds(result.dailyMs) + ' s left today · resets at local midnight';
+    meter.style.width = (result.revealDailySec > 0 ? Math.min(100, (available / 3000) * 100) : 0) + '%';
     holdButton.disabled = !statusIdFor(root) || result.revealDailySec <= 0 || available < 1;
   }
   async function updateAllowance(root) {
@@ -101,15 +121,22 @@
     renderAllowance(result, root);
   }
   function openPanel(root) {
-    messagePanel(explanation(root));
+    const reason = explanation(root);
+    messagePanel(reason.text, 'Why hidden?', reason.kind);
     panelRoot = root;
-    const details = document.createElement('p');
-    details.className = 'tabcloser-control-note';
-    details.textContent = 'Hold to reveal the post’s hidden media and text for up to three seconds. Videos remain paused. Let go or leave this tab to hide again.';
-    allowanceText = document.createElement('p');
+    const heading = document.createElement('h4');
+    heading.textContent = 'Temporary reveal';
+    const details = paragraph('Hold the button to show this post’s hidden media and text for up to three seconds. Videos stay paused. Let go or leave this tab to hide it again.', 'tabcloser-control-note');
+    const track = document.createElement('div');
+    track.className = 'tabcloser-meter';
+    track.setAttribute('aria-hidden', 'true');
+    meter = document.createElement('div');
+    meter.style.width = '0%';
+    track.appendChild(meter);
+    allowanceText = paragraph('Checking allowance…', 'tabcloser-allowance');
     allowanceText.setAttribute('role', 'status');
-    allowanceText.textContent = 'Checking allowance…';
     holdButton = button('Hold to reveal');
+    holdButton.className = 'tabcloser-hold';
     holdButton.disabled = true;
     holdButton.addEventListener('pointerdown', event => {
       if (event.button !== 0) return;
@@ -125,7 +152,8 @@
     });
     holdButton.addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) stopReveal(); });
     holdButton.addEventListener('blur', stopReveal);
-    panel.append(details, allowanceText, holdButton);
+    const reveal = panelSection(heading, details, track, allowanceText, holdButton);
+    panel.appendChild(reveal);
     if (manuallyHidden(root)) {
       const scope = posts.has(statusIdFor(root)) ? 'post' : textHidden(root) ? 'text' : 'media';
       const key = scope !== 'media' ? statusIdFor(root) : stableMediaVerificationKey(root);
@@ -134,15 +162,16 @@
         if (result?.ok) { applySnapshot(result); closePanel(); }
         else allowanceText.textContent = result?.error || 'Unable to remove this hide.';
       });
+      undo.className = 'tabcloser-secondary';
       undo.disabled = snapshot.locked;
       undo.title = snapshot.locked ? 'X protection is locked' : '';
-      panel.appendChild(undo);
+      reveal.appendChild(undo);
     }
     updateAllowance(root);
     allowanceTimer = setInterval(() => { if (!lease && !holding && panelRoot === root) updateAllowance(root); }, 1000);
   }
   async function startReveal(root) {
-    if (!holdButton || holdButton.disabled || holding || lease || document.visibilityState !== 'visible' || !document.hasFocus() || !root.isConnected || (root.dataset.tabcloserMediaState !== 'protected' && !textHidden(root))) return;
+    if (!holdButton || holdButton.disabled || holding || lease || document.visibilityState !== 'visible' || !document.hasFocus() || !root.isConnected || (root.dataset.tabcloserMediaState !== 'protected' && !textHidden(root) && !globalThis.TabCloserXProfile?.collapsed(root))) return;
     holding = true;
     const generation = ++requestGeneration;
     const page = location.href;
@@ -190,6 +219,10 @@
       mark(overlayFor(root), 'data-tabcloser-overlay-revealed');
       for (const player of mediaPlayersWithin(root)) blockMediaPlayback(player);
     });
+    // A collapsed reply from a flagged account unfolds for the same lease.
+    document.querySelectorAll('article[data-tabcloser-collapsed]').forEach(article => {
+      if (statusIdFor(article) === lease.postId) mark(article, 'data-tabcloser-collapse-revealed');
+    });
     document.querySelectorAll('.tabcloser-hidden-text, .tabcloser-quote, .tabcloser-manual-text-notice').forEach(node => {
       if (statusIdFor(node) === lease.postId) mark(node, node.classList.contains('tabcloser-hidden-text') ? 'data-tabcloser-text-revealed' : 'data-tabcloser-quote-revealed');
     });
@@ -198,7 +231,7 @@
     holding = false; requestGeneration += 1;
     clearInterval(revealTimer); revealTimer = null;
     for (const node of marked) {
-      for (const name of ['data-tabcloser-revealed', 'data-tabcloser-overlay-revealed', 'data-tabcloser-text-revealed', 'data-tabcloser-quote-revealed']) node.removeAttribute(name);
+      for (const name of ['data-tabcloser-revealed', 'data-tabcloser-overlay-revealed', 'data-tabcloser-text-revealed', 'data-tabcloser-quote-revealed', 'data-tabcloser-collapse-revealed']) node.removeAttribute(name);
       node.style.removeProperty('--tabcloser-peek-ms');
     }
     marked.clear();
@@ -294,6 +327,6 @@
     if (lease && (!panelRoot?.isConnected || statusIdFor(panelRoot) !== lease.postId || revealPage !== location.href)) stopReveal();
     if (refreshTimer == null) refreshTimer = setTimeout(refresh, 50);
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'poster', 'href'] });
-  globalThis.TabCloserXInteractions = { manuallyHidden, decorate, refresh, stopReveal };
+  globalThis.TabCloserXInteractions = { manuallyHidden, decorate, refresh, stopReveal, openPanel };
   send({ type: 'xControlGet' }).then(result => { if (result?.ok) applySnapshot(result); else refresh(); }).catch(() => refresh());
 })();

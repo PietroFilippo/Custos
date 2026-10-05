@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TabCloser",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Set browsing time limits, block known adult websites, and hide sensitive media on X with on-device protection.",
   "browser_specific_settings": {
     "gecko": {
@@ -106,7 +106,8 @@
         "sacred-art-list.js",
         "catholic-quotes.js",
         "x-protection-v2.js",
-        "x-interactions.js"
+        "x-interactions.js",
+        "x-profile-protection.js"
       ],
       "run_at": "document_start"
     }

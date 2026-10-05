@@ -20,7 +20,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
   let timerId = 0;
   let saved;
   const tabs = initialTabs || [{ id: 1, url, windowId: 1 }];
-  const events = {}, timers = new Map(), alarms = new Map(), removed = [], updates = [];
+  const events = {}, timers = new Map(), alarms = new Map(), removed = [], updates = [], tabMessages = [], filters = [];
   const event = name => ({ addListener(fn, filter) { events[name === 'request' && filter?.types?.includes('main_frame') ? 'adultRequest' : name] = fn; } });
   const context = vm.createContext({
     console, URL, TextDecoder, Uint8ClampedArray, ArrayBuffer,
@@ -46,7 +46,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
       tabs: {
         query: async query => query.url ? [] : query.active
           ? tabs.filter(tab => tab.id === activeId) : tabs.slice(),
-        sendMessage: async () => ({}),
+        sendMessage: async (tabId, message) => { tabMessages.push({ tabId, message }); return {}; },
         update: async (id, change) => {
           updates.push({ id, ...change });
           Object.assign(tabs.find(tab => tab.id === id) || {}, change);
@@ -65,7 +65,14 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
         clear: async name => alarms.delete(name),
         create: (name, options) => alarms.set(name, options), onAlarm: event('alarm'),
       },
-      webRequest: { onBeforeRequest: event('request') },
+      webRequest: {
+        onBeforeRequest: event('request'),
+        filterResponseData(requestId) {
+          const filter = { requestId, written: [], write(data) { this.written.push(data); }, close() {} };
+          filters.push(filter);
+          return filter;
+        },
+      },
       webNavigation: { onBeforeNavigate: event('navigate') },
     },
   });
@@ -74,7 +81,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
   const send = (message, sender) => events.message(message, sender);
   const state = () => send({ type: 'getState' });
   return {
-    events, timers, alarms, removed, updates, send, state,
+    events, timers, alarms, removed, updates, send, state, tabMessages, filters,
     saved: () => saved,
     advance(seconds) { now += seconds * 1000; },
     async activate(id) { activeId = id; await events.activated({ tabId: id }); await state(); },
@@ -271,4 +278,92 @@ test('a missing adult list prevents enabling; a broken locked installation expla
 test('adult protection cannot be changed by content scripts', async () => {
   const h = await start();
   assert.equal((await h.send({ type: 'saveAdultSites', enabled: true }, { tab: { id: 1, url: 'https://x.com' } })).ok, false);
+});
+
+test('sacred art is a presentation switch: editable under every X lock and never touches the tiers', async () => {
+  const xProtection = {
+    labeled: { enabled: true, lockUntil: 900000 },
+    model: { enabled: true, sensitivity: 'strict', lockUntil: 900000 },
+  };
+  const h = await start({ xProtection });
+  assert.equal((await h.state()).xProtection.sacredArt, false, 'blur is the default');
+  assert.equal((await h.send({ type: 'saveXProtection', sacredArt: true }, settingsSender)).ok, true);
+  let saved = (await h.state()).xProtection;
+  assert.equal(saved.sacredArt, true);
+  assert.equal(saved.model.enabled, true, 'an omitted tier keeps its value');
+  assert.equal(saved.labeled.enabled, true);
+  assert.equal((await h.send({ type: 'saveXProtection', sacredArt: false }, settingsSender)).ok, true);
+  saved = (await h.state()).xProtection;
+  assert.equal(saved.sacredArt, false, 'switching back to blur is allowed during the lock too');
+  assert.equal(saved.model.sensitivity, 'strict');
+  const unlocked = await start({ xProtection: { model: { enabled: true } } });
+  assert.equal((await unlocked.send({ type: 'saveXProtection', sacredArt: true }, settingsSender)).ok, true);
+  assert.equal((await unlocked.state()).xProtection.model.enabled, true, 'presentation saves never switch protection off');
+});
+
+test('profile settings save from settings only, and only tighten under an X lock except the alias', async () => {
+  const h = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 } } });
+  assert.deepEqual(JSON.parse(JSON.stringify((await h.state()).xProtection.profile)), {
+    images: 'off', avatars: true, banners: true, markers: false, names: false, alias: 'virtue', collapse: false,
+  }, 'profile protection is off by default');
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'everyone' }, { tab: { id: 1, url: 'https://x.com/home' } })).ok, false,
+    'content scripts cannot change profile protection');
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'flagged', names: true, collapse: true }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'everyone' }, settingsSender)).ok, true, 'widening is allowed');
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'flagged' }, settingsSender)).ok, false, 'narrowing is refused');
+  assert.equal((await h.send({ type: 'saveXProfile', names: false }, settingsSender)).ok, false);
+  assert.equal((await h.send({ type: 'saveXProfile', alias: 'plain' }, settingsSender)).ok, true, 'the alias style is presentation');
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'all' }, settingsSender)).ok, false, 'unknown scopes are rejected');
+  const profile = (await h.state()).xProtection.profile;
+  assert.equal(profile.images, 'everyone');
+  assert.equal(profile.names, true);
+  assert.equal(profile.alias, 'plain');
+  assert.equal(h.saved().xProtection.profile.images, 'everyone');
+  h.advance(900);
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'off', names: false }, settingsSender)).ok, true, 'expiry unlocks loosening');
+});
+
+test('account flags are parsed from X responses only while profile protection needs them', async () => {
+  const user = { __typename: 'User', rest_id: '7', core: { screen_name: 'flagged', name: 'Name' }, legacy: { possibly_sensitive: true } };
+  const payload = new TextEncoder().encode(JSON.stringify({ data: { user: { result: user } } }));
+  const request = { tabId: 3, requestId: 'r1', url: 'https://x.com/i/api/graphql/abc/UserByScreenName?variables=%7B%7D' };
+  const off = await start();
+  off.events.request(request);
+  assert.equal(off.filters.length, 0, 'nothing is intercepted while X and profile protection are off');
+  const on = await start({ xProtection: { profile: { images: 'flagged' } } });
+  on.events.request(request);
+  assert.equal(on.filters.length, 1, 'profile-only protection still reads account data');
+  const filter = on.filters[0];
+  filter.ondata({ data: payload.buffer });
+  await filter.onstop();
+  assert.equal(filter.written.length, 1, 'response bytes pass through untouched');
+  const delivered = on.tabMessages.find(entry => entry.message.type === 'xSensitiveMediaMetadata');
+  assert.equal(delivered.tabId, 3);
+  assert.equal(JSON.stringify(delivered.message.metadata.accounts.map(account => [account.handle, account.flagged])), '[["flagged",true]]');
+  assert.equal(JSON.stringify(delivered.message).includes('Name'), false, 'display names are never forwarded');
+  assert.equal(on.saved()?.xAccounts, undefined, 'account flags are never stored');
+});
+
+test('SafeSearch rewrites search engines to their strict filter and shares the adult-site lock', async () => {
+  const h = await start();
+  const request = url => h.events.adultRequest({ type: 'main_frame', url });
+  assert.equal(Object.keys(await request('https://www.google.com/search?q=test')).length, 0, 'off by default');
+  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: true }, settingsSender)).ok, true);
+  assert.equal((await request('https://www.google.com/search?q=test&tbm=isch&safe=off')).redirectUrl, 'https://www.google.com/search?q=test&tbm=isch&safe=active');
+  assert.equal((await request('https://www.google.co.uk/search?q=test')).redirectUrl, 'https://www.google.co.uk/search?q=test&safe=active');
+  assert.equal(Object.keys(await request('https://www.google.com/search?q=test&safe=active')).length, 0, 'no redirect loop');
+  assert.equal((await request('https://www.bing.com/images/search?q=test')).redirectUrl, 'https://www.bing.com/images/search?q=test&adlt=strict');
+  assert.equal((await request('https://duckduckgo.com/?q=test')).redirectUrl, 'https://duckduckgo.com/?q=test&kp=1');
+  assert.equal(Object.keys(await request('https://duckduckgo.com/about')).length, 0);
+  const posted = await h.events.adultRequest({ type: 'main_frame', url: 'https://html.duckduckgo.com/html/', requestBody: { formData: { q: ['test query'] } } });
+  assert.equal(posted.redirectUrl, 'https://html.duckduckgo.com/html/?q=test+query&kp=1', 'HTML and Lite searches post their query in the body');
+  assert.equal(Object.keys(await h.events.adultRequest({ type: 'main_frame', url: 'https://lite.duckduckgo.com/lite/' })).length, 0, 'the empty search form loads');
+  assert.equal((await request('https://search.brave.com/images?q=test')).redirectUrl, 'https://search.brave.com/images?q=test&safesearch=strict');
+  assert.equal(Object.keys(await request('https://www.google.com/maps?q=test')).length, 0, 'only search pages are rewritten');
+  assert.equal(Object.keys(await h.events.adultRequest({ type: 'sub_frame', url: 'https://www.google.com/search?q=test' })).length, 0);
+  assert.equal((await h.send({ type: 'lockAdultSites', durationSec: 120 }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: false }, settingsSender)).ok, false, 'locked SafeSearch stays on');
+  h.advance(121);
+  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: false }, settingsSender)).ok, true);
+  assert.equal(Object.keys(await request('https://www.google.com/search?q=test')).length, 0);
 });

@@ -149,6 +149,96 @@
     };
   }
 
+  // Explicit self-descriptions that adult accounts advertise in a name or bio.
+  // Opt-in, and only ever combined with X's own account flag in the UI.
+  const explicitMarkerPattern = /🔞|\bnsfw\b|\bonlyfans\b|\bfansly\b|(?:^|[^\d])18\s?\+/iu;
+  const explicitLinkHostPattern = /(?:^|\.)(?:onlyfans\.com|fansly\.com)$/i;
+  const handlePattern = /^[A-Za-z0-9_]{1,15}$/;
+
+  // Profile pictures are matched across every X surface by their image path;
+  // shared default avatars never identify an account.
+  function profileImageKey(value) {
+    try {
+      const match = new URL(value).pathname.match(/^\/profile_images\/(\d+)\//);
+      return match ? '/profile_images/' + match[1] + '/' : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function profileBannerKey(value) {
+    try {
+      const match = new URL(value).pathname.match(/^\/profile_banners\/(\d+)\//);
+      return match ? '/profile_banners/' + match[1] + '/' : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function explicitLink(value) {
+    try {
+      return explicitLinkHostPattern.test(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  function accountFromUser(node) {
+    if (node.__typename && node.__typename !== 'User') return null;
+    const legacy = node.legacy && typeof node.legacy === 'object' ? node.legacy : null;
+    const core = node.core && typeof node.core === 'object' ? node.core : null;
+    const handle = core?.screen_name ?? legacy?.screen_name;
+    if (typeof handle !== 'string' || !handlePattern.test(handle)) return null;
+    const id = node.rest_id ?? legacy?.id_str;
+    const name = String(core?.name ?? legacy?.name ?? '');
+    const bio = String(legacy?.description ?? node.profile_bio?.description ?? '');
+    const links = [legacy?.url, ...(legacy?.entities?.url?.urls || []), ...(legacy?.entities?.description?.urls || [])]
+      .map(link => (typeof link === 'string' ? link : link?.expanded_url))
+      .filter(link => typeof link === 'string');
+    const following = node.relationship_perspectives?.following ?? legacy?.following;
+    return {
+      id: id == null ? null : String(id),
+      handle: handle.toLowerCase(),
+      flagged: hasDirectSensitivityMarker(legacy) || hasDirectSensitivityMarker(node) ||
+        hasSensitiveProfileInterstitial(node) || hasSensitiveProfileInterstitial(legacy),
+      marker: explicitMarkerPattern.test(name + '\n' + bio) || links.some(explicitLink),
+      following: typeof following === 'boolean' ? following : null,
+      avatarKey: profileImageKey(node.avatar?.image_url ?? legacy?.profile_image_url_https),
+      bannerKey: profileBannerKey(legacy?.profile_banner_url),
+    };
+  }
+
+  // Account signals for profile protection. Names, bios, and links are only
+  // read to compute the marker flag; they never leave this function.
+  function extractAccounts(payload, limit = 2000) {
+    const accounts = new Map();
+    const seen = new Set();
+
+    function inspect(node) {
+      if (!node || typeof node !== 'object' || seen.has(node) || accounts.size >= limit) return;
+      seen.add(node);
+      const account = accountFromUser(node);
+      if (account) {
+        const previous = accounts.get(account.handle);
+        accounts.set(account.handle, previous ? {
+          id: previous.id ?? account.id,
+          handle: account.handle,
+          flagged: previous.flagged || account.flagged,
+          marker: previous.marker || account.marker,
+          following: previous.following ?? account.following,
+          avatarKey: previous.avatarKey ?? account.avatarKey,
+          bannerKey: previous.bannerKey ?? account.bannerKey,
+        } : account);
+      }
+      for (const child of Object.values(node)) {
+        if (child && typeof child === 'object') inspect(child);
+      }
+    }
+
+    inspect(payload);
+    return [...accounts.values()];
+  }
+
   function extractAgeVerificationTweetIds(payload) {
     const tweetIds = new Set();
     const seen = new Set();
@@ -264,6 +354,7 @@
 
   return {
     containsSensitivityMarker,
+    extractAccounts,
     extractAgeVerificationTweetIds,
     extractDirectVideoSources,
     extractSensitiveMedia,

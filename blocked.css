@@ -1,5 +1,4 @@
 body {
-  margin: 0;
   min-height: 100vh;
   display: grid;
   place-items: center;
@@ -7,13 +6,41 @@ body {
   background: radial-gradient(600px 500px at 50% 40%, #293026, var(--bg));
 }
 main { width: 100%; max-width: 520px; }
-.brand { justify-content: center; margin-bottom: 28px; }
-.block-card { background: var(--panel); border: 1px solid var(--panel-border); border-top: 3px solid var(--gold); border-radius: 12px; padding: 36px; text-align: center; }
+.brand { justify-content: center; margin-bottom: 24px; }
+.brand img { width: 32px; height: 32px; }
+.brand-name { font-size: 18px; }
+
+/* Deliberately no unblock control: the page explains, it never shortens a block. */
+.block-card {
+  background: var(--panel); border: 1px solid var(--panel-border); border-top: 3px solid var(--gold);
+  border-radius: var(--radius-l); padding: 32px 36px; text-align: center;
+}
+.block-card.expired { border-top-color: var(--green); }
+.block-card.expired .badge { color: var(--green); }
 .badge { color: var(--gold); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; font-weight: 650; }
-h1 { font-size: clamp(24px, 6vw, 30px); letter-spacing: -.6px; margin: 14px 0 12px; }
-.domain { color: var(--muted); font-size: 16px; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; margin: 0; }
-.countdown { color: var(--gold); font-size: 16px; line-height: 1.6; margin: 28px 0; padding: 22px 12px; background: var(--bg); border: 1px solid var(--panel-border); border-radius: 8px; }
-#time { display: block; font-size: 42px; font-weight: 600; letter-spacing: -1px; font-variant-numeric: tabular-nums; color: var(--text); }
-.note { color: var(--muted); font-size: 13px; line-height: 1.65; margin: 24px 0; }
-.expired { color: var(--green); }
-@media (max-width: 400px) { .block-card { padding: 24px 18px; } }
+h1 { font-size: clamp(22px, 5vw, 28px); letter-spacing: -0.4px; margin: 12px 0 8px; }
+.domain { color: var(--muted); font-size: 15px; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+
+.countdown, .statement {
+  margin: 24px 0; border-radius: var(--radius-m);
+  background: var(--bg); border: 1px solid var(--panel-border);
+}
+.countdown { padding: 18px 12px; }
+.countdown .label { display: block; color: var(--gold); font-size: 14px; margin-bottom: 4px; }
+.countdown .time { display: block; font-size: 42px; font-weight: 600; letter-spacing: -1px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.countdown .bar { max-width: 260px; margin: 14px auto 0; }
+.countdown .bar-fill { background: var(--gold); }
+.statement { padding: 18px 14px; font-size: 15px; }
+.statement.ok { color: var(--green); }
+.statement.warn { color: var(--amber); }
+
+.why { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin: 0 auto; max-width: 42ch; }
+.why:empty { display: none; }
+.lock-note {
+  display: inline-flex; align-items: center; margin-top: 16px;
+  padding: 8px 12px; border-radius: 999px; background: var(--gold-soft); color: var(--gold); font-size: 13px; font-weight: 600;
+}
+.actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 24px; }
+.actions .primary-action { font-size: 14px; }
+.actions .btn { padding: 10px 14px; font-size: 14px; }
+@media (max-width: 420px) { .block-card { padding: 24px 18px; } }

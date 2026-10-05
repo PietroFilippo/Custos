@@ -4,7 +4,8 @@
 // player is never used, decoded, or seeked by TabCloser.
 const xProtectionCoordinatorVersion = 'media-controls-v2';
 let mode = 'off';
-let settings = { replaceText: false, blockLike: false, sensitivity: 'balanced' };
+let settings = { replaceText: false, blockLike: false, sacredArt: false, sensitivity: 'balanced' };
+let protectionKey = null;
 let operationId = 0;
 const sensitiveUrls = new Set();
 const sensitiveTweetIds = new Set();
@@ -26,7 +27,10 @@ const videoDecisionsByTweetId = new Map();
 const verifiedSafeMediaKeys = new Set();
 const warningPattern = /(?:sensitive content|content warning|warning\s*:\s*(?:nudity|adult content)|may contain sensitive|potentially sensitive)/i;
 const maxDirectVideoEntries = 500;
-const mediaSelector = '[data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"]';
+// Link-preview images are media cells too (never the whole card, whose text
+// and link must stay untouched).
+const mediaSelector = '[data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"], ' +
+  '[data-testid="card.layoutLarge.media"], [data-testid="card.layoutSmall.media"]';
 const mediaElementSelector = 'img[src], video, source[src]';
 const statusPathPattern = /\/status\/(\d+)(?:\/(?:photo|video)\/\d+)?/;
 const statusLinkSelector = 'a[href*="/status/"]';
@@ -243,6 +247,28 @@ function activateOverlayHost(host) {
 
 function clearOverlayHost(host) {
   host.classList.remove('tabcloser-overlay-host', 'tabcloser-overlay-host-static');
+}
+
+// CSS blur radii are absolute: a radius that erases a timeline thumbnail
+// leaves silhouettes readable in the full-screen viewer. The stylesheet
+// scales the blur from each hidden cell's shorter side.
+const blurSizeObserver = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(entries => { for (const entry of entries) setBlurSize(entry.target, entry.contentRect); })
+  : null;
+
+function setBlurSize(root, rect) {
+  const side = Math.min(rect?.width || 0, rect?.height || 0);
+  if (side > 0) root.style.setProperty('--tabcloser-media-side', Math.round(side) + 'px');
+}
+
+function trackBlurSize(root) {
+  setBlurSize(root, root.getBoundingClientRect?.());
+  blurSizeObserver?.observe(root);
+}
+
+function untrackBlurSize(root) {
+  blurSizeObserver?.unobserve(root);
+  root.style?.removeProperty('--tabcloser-media-side');
 }
 
 function hashString(value) {
@@ -495,6 +521,7 @@ function setRootState(root, state, reason) {
   const article = root.closest('article');
   if (state === 'safe') {
     restoreRootPlayback(root);
+    untrackBlurSize(root);
     existing?.remove();
     clearOverlayHost(host);
     // The protected element can live outside the article (media viewer), so a
@@ -507,19 +534,23 @@ function setRootState(root, state, reason) {
     return;
   }
   activateOverlayHost(host);
+  trackBlurSize(root);
   const overlay = existing || document.createElement('div');
   // Pending media shows through heavily blurred behind a transparent click
-  // shield. The painting and notice are reserved for confirmed mature
+  // shield. The notice (and the optional painting) is reserved for confirmed
   // verdicts; a failure verdict that will still be retried renders like the
-  // pending state so a successful retry never pops artwork in and out.
+  // pending state so a successful retry never pops a notice in and out.
   const mature = reason === 'visual' || reason === 'metadata' || reason === 'manual';
   const willRetry = state === 'protected' && !mature && retryableReason.test(reason || '') &&
     (rootRecords.get(root)?.retries || 0) < retryDelaysMs.length;
   const shieldOnly = state === 'pending' || willRetry;
-  const artUrl = state === 'protected' && mature ? sacredArtUrlFor(root) : null;
+  // Blur is the default cover. The painting is a presentation choice layered
+  // over the same blurred, protected media.
+  const artUrl = state === 'protected' && mature && settings.sacredArt ? sacredArtUrlFor(root) : null;
   overlay.className = 'tabcloser-media-overlay' +
     (shieldOnly ? ' tabcloser-media-overlay-pending' : '') +
-    (artUrl ? ' tabcloser-media-overlay-art' : '');
+    (artUrl ? ' tabcloser-media-overlay-art' : '') +
+    (!shieldOnly && !artUrl ? ' tabcloser-media-overlay-blur' : '');
   overlay.style.backgroundImage = '';
   overlay.setAttribute('role', 'group');
   overlay.setAttribute('aria-live', 'polite');
@@ -561,6 +592,7 @@ function clearAllStates() {
   document.querySelectorAll('.tabcloser-overlay-host').forEach(clearOverlayHost);
   document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
     restoreRootPlayback(root);
+    untrackBlurSize(root);
     delete root.dataset.tabcloserMediaState;
     delete root.dataset.tabcloserMediaReason;
   });
@@ -1281,16 +1313,38 @@ function scanKnownRootsForMetadata() {
   return { rootsScanned: roots.size, matchedRoots: matchedRoots.slice(0, 20) };
 }
 
+// Redraws covers after a presentation-only change (sacred art on/off) without
+// discarding any verdict, so no media is classified or probed again.
+function refreshProtectedPresentation() {
+  closeLightbox();
+  document.querySelectorAll('[data-tabcloser-media-state="protected"]').forEach(root => {
+    setRootState(root, 'protected', root.dataset.tabcloserMediaReason);
+  });
+}
+
 function setProtection(config) {
   globalThis.TabCloserXInteractions?.stopReveal();
   const modelEnabled = config?.model?.enabled === true;
   const labeledEnabled = modelEnabled || config?.labeled?.enabled === true || config?.enabled === true;
-  settings = {
+  const nextSettings = {
     replaceText: config?.replaceText === true,
     blockLike: config?.blockLike === true,
+    sacredArt: config?.sacredArt === true,
     sensitivity: config?.model?.sensitivity || 'balanced',
   };
-  mode = modelEnabled ? 'full' : labeledEnabled ? 'labeled' : 'off';
+  const nextMode = modelEnabled ? 'full' : labeledEnabled ? 'labeled' : 'off';
+  document.documentElement.toggleAttribute('data-tabcloser-block-like', nextSettings.blockLike && nextMode !== 'off');
+  const key = JSON.stringify([nextMode, nextSettings.sensitivity, nextSettings.replaceText, nextSettings.blockLike]);
+  if (key === protectionKey) {
+    // Presentation (sacred art) and profile settings never invalidate verdicts.
+    const artChanged = settings.sacredArt !== nextSettings.sacredArt;
+    settings = nextSettings;
+    if (artChanged) refreshProtectedPresentation();
+    return;
+  }
+  protectionKey = key;
+  settings = nextSettings;
+  mode = nextMode;
   document.documentElement.dataset.tabcloserXProtection = mode;
   xMetadataDebug('protection-state', {
     diagnosticVersion: 'video-consensus-v2',
@@ -1381,17 +1435,21 @@ function blockPendingOrProtectedActivation(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
   event.stopPropagation();
-  // A plain click on confirmed-censored media opens the painting large, as if
-  // the artwork were the post's own image.
+  // A plain click on censored media opens the painting large when sacred art
+  // is on, as if the artwork were the post's own image. With the default blur
+  // it explains instead: "Why hidden?" never enlarges the blurred original.
   if (event.type !== 'click' || event.button !== 0) return;
   const stateRoot = root.matches('[data-tabcloser-media-state]')
     ? root
     : root.querySelector('[data-tabcloser-media-state="protected"]');
-  const reason = stateRoot?.dataset.tabcloserMediaReason;
-  if (stateRoot?.dataset.tabcloserMediaState === 'protected' && (reason === 'visual' || reason === 'metadata' || reason === 'manual')) {
+  if (stateRoot?.dataset.tabcloserMediaState !== 'protected') return;
+  const reason = stateRoot.dataset.tabcloserMediaReason;
+  if (settings.sacredArt && (reason === 'visual' || reason === 'metadata' || reason === 'manual')) {
     const url = sacredArtUrlFor(stateRoot);
     if (url) openLightbox(url);
+    return;
   }
+  globalThis.TabCloserXInteractions?.openPanel?.(stateRoot);
 }
 
 window.addEventListener('click', blockPendingOrProtectedActivation, true);

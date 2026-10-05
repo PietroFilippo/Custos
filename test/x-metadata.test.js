@@ -308,3 +308,43 @@ test('summarizes visibility signals without exposing post text or media URLs', (
   assert.equal(JSON.stringify(summary).includes('private.jpg'), false);
   assert.equal(JSON.stringify(summary).includes('private_author'), false);
 });
+
+test('extracts account flags for profile protection without names, bios, or links', () => {
+  const payload = { data: { timeline: [
+    { tweet: { core: { user_results: { result: {
+      __typename: 'User', rest_id: '111',
+      core: { screen_name: 'Flagged_Acct', name: 'Private Name' },
+      avatar: { image_url: 'https://pbs.twimg.com/profile_images/9001/abc_normal.jpg' },
+      legacy: { possibly_sensitive: true, description: 'private bio', profile_banner_url: 'https://pbs.twimg.com/profile_banners/111/1700000000' },
+      relationship_perspectives: { following: false },
+    } } } } },
+    { user_results: { result: {
+      rest_id: '222',
+      legacy: { screen_name: 'legacy_marker', name: 'Spicy 🔞', profile_image_url_https: 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png', following: true },
+    } } },
+    { user_results: { result: {
+      __typename: 'User', rest_id: '333', core: { screen_name: 'linked', name: 'Plain' },
+      legacy: { description: 'see link', entities: { url: { urls: [{ expanded_url: 'https://onlyfans.com/someone' }] } } },
+      profile_interstitial_type: 'sensitive_media',
+    } } },
+    { user_results: { result: { __typename: 'User', rest_id: '444', core: { screen_name: 'ordinary', name: 'Only fans of jazz, 2018+ shows' }, legacy: {} } } },
+    { user_results: { result: { __typename: 'UserUnavailable', core: { screen_name: 'gone' } } } },
+  ] } };
+  const accounts = Object.fromEntries(require('../x-metadata.js').extractAccounts(payload).map(account => [account.handle, account]));
+  assert.deepEqual(accounts.flagged_acct, {
+    id: '111', handle: 'flagged_acct', flagged: true, marker: false, following: false,
+    avatarKey: '/profile_images/9001/', bannerKey: '/profile_banners/111/',
+  });
+  assert.equal(accounts.legacy_marker.marker, true, 'the 🔞 marker counts');
+  assert.equal(accounts.legacy_marker.flagged, false);
+  assert.equal(accounts.legacy_marker.following, true, 'legacy following flag is read');
+  assert.equal(accounts.legacy_marker.avatarKey, null, 'shared default avatars never identify an account');
+  assert.equal(accounts.linked.flagged, true, 'a sensitive profile interstitial flags the account');
+  assert.equal(accounts.linked.marker, true, 'an OnlyFans link counts as a marker');
+  assert.equal(accounts.ordinary.marker, false, 'ordinary phrases are not markers');
+  assert.equal(accounts.gone, undefined, 'unavailable users are skipped');
+  const serialized = JSON.stringify(Object.values(accounts));
+  for (const secret of ['Private Name', 'private bio', 'Spicy', 'onlyfans.com', 'see link']) {
+    assert.equal(serialized.includes(secret), false, secret + ' must not leave the extractor');
+  }
+});

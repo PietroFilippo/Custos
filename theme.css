@@ -13,14 +13,29 @@
   --gold-dim: #867142;
   --amber: #e9bd79;
   --danger: #ff9c96;
+  --radius-s: 6px;
+  --radius-m: 9px;
+  --radius-l: 12px;
+  --control-bg: #141715;
+  --control-border: #4a514a;
+  --track: #353b36;
+  --green-soft: rgba(140, 186, 155, 0.14);
+  --gold-soft: rgba(217, 182, 111, 0.14);
+  --amber-soft: rgba(233, 189, 121, 0.14);
+  --danger-soft: rgba(255, 156, 150, 0.12);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --lock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5 7V5a3 3 0 0 1 6 0v2' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round'/%3E%3Crect x='3' y='7' width='10' height='7' rx='1.6'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); margin: 0; line-height: 1.45; }
+p { margin: 0; }
+h1, h2, h3, h4 { margin: 0; font-weight: 650; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 a { color: var(--gold); text-underline-offset: 3px; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: 0.95em; }
 :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand img { width: 40px; height: 40px; flex: 0 0 auto; }
@@ -28,6 +43,135 @@ a { color: var(--gold); text-underline-offset: 3px; }
 .brand-caption { color: var(--muted); font-size: 12px; margin: 3px 0 0; }
 .primary-action { background: var(--gold); color: #20251f; border: 1px solid var(--gold); border-radius: 8px; padding: 10px 16px; font-weight: 650; }
 .primary-action:hover { background: #e6c784; }
+
+/* State pills and lock chips. A lock is always spelled out, never only an icon. */
+.pill, .lock-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; line-height: 1;
+  padding: 4px 8px; border-radius: 999px; white-space: nowrap;
+}
+.pill { background: #2f3531; color: var(--muted); }
+.pill-on, .pill-counting { background: var(--green-soft); color: var(--green); }
+.pill-attention, .pill-blocked { background: var(--amber-soft); color: var(--amber); }
+.lock-chip { background: var(--gold-soft); color: var(--gold); }
+.lock-icon::before, .lock-chip::before {
+  content: ""; display: inline-block; flex: 0 0 auto; width: 11px; height: 11px;
+  background: currentColor; mask: var(--lock-icon) center / contain no-repeat;
+}
+.lock-icon::before { width: 13px; height: 13px; margin-right: 6px; vertical-align: -1px; }
+
+/* Locked state inside a settings section: exact end, time left, consequence. */
+.lock-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; border-radius: var(--radius-m);
+  background: var(--gold-soft); border: 1px solid rgba(217, 182, 111, 0.35);
+  font-size: 13px;
+}
+.lock-banner::before {
+  content: ""; flex: 0 0 auto; width: 14px; height: 14px; margin-top: 2px;
+  background: var(--gold); mask: var(--lock-icon) center / contain no-repeat;
+}
+.lock-banner strong { color: var(--gold); font-weight: 650; }
+.lock-banner .help { display: block; margin-top: 2px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; line-height: 1.2;
+  padding: 8px 12px; border-radius: var(--radius-s);
+  border: 1px solid var(--card-border); background: var(--card); color: var(--text);
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { border-color: #5a635a; background: #2b312c; }
+.btn:disabled { opacity: 0.5; }
+.btn-primary { background: var(--gold); border-color: var(--gold); color: #20251f; }
+.btn-primary:hover:not(:disabled) { background: #e6c784; border-color: #e6c784; }
+.btn-green { background: var(--green-deep); border-color: #4a7659; color: #fff; }
+.btn-green:hover:not(:disabled) { background: #3a5f48; border-color: #4a7659; }
+.btn-quiet { background: transparent; border-color: transparent; color: var(--muted); }
+.btn-quiet:hover:not(:disabled) { background: #2b312c; border-color: transparent; color: var(--text); }
+.btn-lock { color: var(--gold); border-color: var(--gold-dim); background: transparent; }
+.btn-lock:hover:not(:disabled) { background: var(--gold-soft); border-color: var(--gold); }
+.btn-lock.lock-icon::before { margin-right: 0; }
+.btn-amber { color: var(--amber); border-color: #6c5330; background: transparent; }
+.btn-amber:hover:not(:disabled) { background: var(--amber-soft); border-color: #6c5330; }
+.btn-danger { color: var(--danger); border-color: #6a3a3a; background: transparent; }
+.btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: #6a3a3a; }
+.btn-icon { padding: 6px; width: 32px; height: 32px; justify-content: center; font-size: 18px; }
+.btn-sm { padding: 5px 9px; font-size: 12.5px; }
+.btn.confirming { background: #6a2020; color: #ffd0d0; border-color: var(--danger); }
+
+.input {
+  color: var(--text); background: var(--control-bg);
+  border: 1px solid var(--control-border); border-radius: var(--radius-s);
+  padding: 6px 8px; min-width: 0;
+}
+.input:focus { border-color: var(--gold); outline: none; box-shadow: 0 0 0 2px rgba(217, 182, 111, 0.25); }
+.input:disabled { opacity: 0.5; }
+.input-num { width: 64px; font-family: ui-monospace, Consolas, monospace; text-align: right; }
+.input[type="datetime-local"] { color-scheme: dark; }
+
+/* A checkbox styled as a switch; its label text always stays visible. */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13.5px; }
+.switch input {
+  appearance: none; margin: 0; width: 36px; height: 20px; border-radius: 999px;
+  background: #4a524b; position: relative; flex: 0 0 auto; cursor: pointer; transition: background 0.15s;
+}
+.switch input::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #f0f0e9; transition: transform 0.15s;
+}
+.switch input:checked { background: var(--green); }
+.switch input:checked::after { transform: translateX(16px); background: #17201a; }
+.switch.gold input:checked { background: var(--gold); }
+.switch input:disabled { opacity: 0.5; cursor: default; }
+.switch input:disabled + span { opacity: 0.7; }
+.switch input:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.check input { margin: 0; width: 15px; height: 15px; accent-color: var(--green); flex: 0 0 auto; }
+.check.gold input { accent-color: var(--gold); }
+.check input:disabled + span { opacity: 0.6; }
+
+/* Radio cards with a title and a one-line description. */
+.choices { display: grid; gap: 8px; }
+.choice {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-items: start;
+  padding: 11px 12px; border-radius: var(--radius-m);
+  border: 1px solid var(--card-border); background: var(--card); cursor: pointer;
+}
+.choice input { margin: 3px 0 0; accent-color: var(--gold); width: 15px; height: 15px; }
+.choice-title { font-size: 13.5px; font-weight: 600; }
+.choice-desc { grid-column: 2; font-size: 12.5px; color: var(--muted); }
+/* Only the card's own radio counts: a disabled option nested inside (such as a
+   locked lower sensitivity) must not dim the selected card. */
+.choice:has(> input:checked, > .choice-main > input:checked) { border-color: var(--gold); background: var(--gold-soft); }
+.choice:has(> input:disabled, > .choice-main > input:disabled) { opacity: 0.55; cursor: default; }
+.choice:has(> input:focus-visible, > .choice-main > input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
+.choice-nested { grid-column: 2; margin-top: 6px; padding-top: 10px; border-top: 1px solid rgba(217, 182, 111, 0.25); }
+
+.segmented { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--card-border); border-radius: var(--radius-s); overflow: hidden; background: var(--control-bg); }
+.segmented label {
+  font-size: 13px; font-weight: 600; color: var(--muted); position: relative;
+  padding: 7px 12px; border-right: 1px solid var(--card-border); cursor: pointer;
+}
+.segmented label:last-child { border-right: 0; }
+.segmented input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.segmented label:has(input:checked) { background: var(--gold-soft); color: var(--gold); }
+.segmented label:has(input:disabled) { opacity: 0.45; cursor: default; }
+.segmented label:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: -2px; }
+
+/* Helper text is always visible, never hover-only. */
+.help { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.status-line { font-size: 12.5px; color: var(--muted); }
+.status-line strong { color: var(--text); font-weight: 600; }
+.status-line.ok { color: var(--green); }
+.status-line.warn { color: var(--amber); }
+.status-line.error { color: var(--danger); }
+
+.bar { height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.bar-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.25s; }
+.bar-fill.warn { background: var(--amber); }
+.bar-fill.danger { background: var(--danger); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

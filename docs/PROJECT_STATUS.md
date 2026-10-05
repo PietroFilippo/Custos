@@ -1,10 +1,18 @@
-# Project status — 2 October 2026
+# Project status — 5 October 2026
 
-## Current development milestone: 0.4.1
+## Current development milestone: 0.5.0
 
-TabCloser now covers three areas: browsing time limits, known adult websites, and sensitive content on X. The name and extension ID remain unchanged. The current build is for development testing; a newly signed release has not been published.
+0.5.0 builds on the unreleased 0.4.1 with a redesigned interface, a blur-first presentation for hidden X media, profile protection on X, and fixes for coverage gaps. The extension ID and permissions are unchanged; new settings default off. A signed release has not been published.
 
-Documentation audited against the 0.4.1 source on 2 October. The latest implementation and validation run remain those of 29 September; this documentation audit did not rerun the automated suite or complete the pending live/release checks.
+Completed for 0.5.0 (5 October):
+
+- **Blur by default.** Confirmed-sensitive X media stays in place, blurred and darkened, with a corner notice and “Why hidden?”. The blur radius scales with the media cell (fixed-radius fallback first, so an engine that rejected the scaled value would still blur). Clicking blurred media opens “Why hidden?”. **Cover hidden media with sacred art** is an opt-in presentation switch that stays editable under every lock and redraws covers without reclassifying. Upgraded installs move to the blur until it is switched on.
+- **Redesign** following the mockups (kept outside Git): settings with at-a-glance status cards, a sticky section menu with lock badges, single column, inline helper text instead of hover tooltips, an Off / X labels / Labels + classifier level selector, and one **Lock…** popover (1 h, 1 day, 1 week, 30 days, until a date) for timers, adult sites, the X level, and the reveal allowance. Locked sections show the exact end and time left. The popup has a header summary, per-area lock chips, and readable site cards. The block page explains the block, shows when early unblock is locked, and offers **Close this tab**; there is still no unblock or “go back” button during a cooldown. “Why hidden?” is sectioned into the reason and the metered reveal.
+- **Profile protection on X** (opt-in): account flags come from X’s own account data (`possibly_sensitive` or a sensitive profile interstitial) plus optional explicit name/bio markers. The classifier never flags accounts, and flags live only in page memory; nothing is stored, because a persisted author list previously censored a safe post permanently. Picture/banner scope is Off, flagged accounts only, or everyone except accounts you follow (fail-closed until X reports a follow; your own picture never blurs). Display-name replacement (plain “Hidden account” or a stable virtue alias such as “Temperance ✝”) and reply collapse apply to flagged accounts only. Collapsed replies reveal through the existing per-post allowance. Under an X lock profile settings may only tighten; the alias style stays free.
+- **Coverage gaps:** a private-window warning in settings and the popup when Firefox does not run TabCloser there; optional SafeSearch enforcement (Google, Bing, DuckDuckGo, Brave Search) sharing the adult-site lock; link-preview images on X are classified and covered as their own cells (the whole card is still never a media root); the unused v1 `x-protection.js` was removed.
+- GraphQL parsing now also covers user operations (profiles, follower lists) when profile protection is on, and still runs only while some X protection needs it.
+
+## Previous milestone: 0.4.1
 
 Completed in this return-to-project cycle:
 
@@ -36,16 +44,16 @@ Regression tests replay these score patterns through the real coordinator. Unobs
 
 ## Validation and limits
 
-- 144 automated tests pass, covering existing timers, ledger accounting/concurrency, persistent locks, adult host matching and list integrity, manual text/media behavior, popup/settings feedback, and classifier coordination. The new overview cases cover partial X locks, lock expiry, list failures, and enabled timer counts including duplicate/blocked domains.
-- Build and packaging pass; Firefox extension lint reports zero errors, warnings, or notices. The unsigned development package is `artifacts/tabcloser-0.4.1.zip` (ignored by Git).
-- The refreshed settings, popup, and block page are visually checked with real HTML/CSS/JS and isolated browser API fixtures, including narrow settings, section navigation, and the expanded ten-site popup with its pinned settings button. This does not substitute for a live Zen extension smoke test. The inspected Zen profile has a permanent installation and no temporary add-on to reload; its installed package was not replaced during this UI refresh.
-- Private corpus qualification, live rechecks of the five video posts, and signed-XPI release testing remain open. The provided logs do not contain original video pixels or later samples. The current evaluator covers default Balanced image scoring only; its alternative-threshold search and successful exit are not proof that the configured operating point passes. Video policies and other presets still need separate qualification; see `RELEASE_CHECKLIST.md`.
-- No domains or media are sent to a classification/list service. Media pixels/scores stay transient; manual choices, locks, and reveal usage stay in local extension storage. Only the maintainer update command downloads the upstream list.
-- The domain list cannot identify every adult page or newly created domain. It deliberately excludes broad mixed-content platforms and public suffixes. The settings lock does not prevent browser-level add-on disabling/removal or a user editing their own profile.
+- 0.5.0: 159 automated tests pass (`npm test`, 5 October). New coverage: blur default and in-place sacred-art switching, the scaled-blur fallback, sacred art under locks, partial X saves never switching tiers off, account extraction without names/bios, profile scopes (including fail-closed everyone scope and own-picture exemption), stable aliases, marker opt-in, reply collapse and its metered reveal, profile lock tightening, account parsing only while needed, SafeSearch rewrites and lock, and link-preview cells.
+- `npm run build`, `npm run lint:extension` (0 errors, warnings, or notices), and `npm run package` pass; the unsigned development package is `artifacts/tabcloser-0.5.0.zip` (ignored by Git).
+- The settings page, popup, block page, and X overlays (blur, sacred art, “Why hidden?”, aliases, blurred avatars, collapsed replies) were rendered in headless Chrome with the real HTML/CSS/JS, an isolated fake browser API, and a fake X page. This does not replace a live Zen smoke test or a check against live X responses: the location of X’s following, avatar, and banner fields must be verified live, and X’s real DOM for names, user cells, and hover cards may differ from the fixtures.
+- 0.4.1 notes still apply: private corpus qualification, live rechecks of the five video posts, and signed-XPI release testing remain open. The evaluator covers default Balanced image scoring only; video policies and other presets need separate qualification; see `RELEASE_CHECKLIST.md`.
+- No domains or media are sent to a classification/list service. Media pixels, scores, and account flags stay transient; manual choices, locks, and reveal usage stay in local extension storage. Only the maintainer update command downloads the upstream list.
+- The domain list cannot identify every adult page or newly created domain. SafeSearch covers four engines only. The settings lock does not prevent browser-level add-on disabling/removal or a user editing their own profile.
 
 ## Recommended next steps
 
-1. Re-test these five videos in the verified X account, collect known mature videos alongside safe videos, and measure both missed content and false positives before further threshold changes. Use the new preset-bearing logs. Keep private media out of Git.
-2. Add profile-picture and banner protection as separate opt-in controls with small-image tests. These surfaces remain outside current automatic/manual media discovery.
-3. Smoke-test 0.4.1 in Zen, including the new toolbar overview and `about:addons` icon, metadata, and settings route. A name change is deferred; the user chose to retain TabCloser.
-4. Complete the release checklist, including multiple-site Zen testing and source-package review, before signing/publishing 0.4.1.
+1. Smoke-test 0.5.0 in Zen against live X: verify account fields (following, avatar, banner) in real responses, aliases in posts/user cells/hover cards/profile headers, collapsed replies, the blur in the photo viewer, and link-preview cards. Adjust the fixtures to any real DOM differences.
+2. Re-test the five videos in the verified X account, collect known mature videos alongside safe videos, and measure both missed content and false positives before further threshold changes. Keep private media out of Git.
+3. Consider further gaps: embedded tweets on other sites (content scripts run only in top-level X frames), direct `pbs.twimg.com` / `video.twimg.com` media opened in a tab, and alternative X front-ends.
+4. Complete the release checklist, including multiple-site Zen testing and source-package review, before signing/publishing 0.5.0.

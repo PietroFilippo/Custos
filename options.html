@@ -9,153 +9,226 @@
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
-  <main>
-    <header class="page-header">
-      <div class="brand">
-        <img src="icons/tabcloser.svg" alt="" width="40" height="40">
-        <div><span class="brand-name">TabCloser</span><p class="brand-caption">Your browsing protection</p></div>
-      </div>
-      <h1>Protection settings</h1>
-      <p class="tagline">Choose your boundaries for time, websites, and sensitive media.</p>
-    </header>
-    <nav class="section-nav" aria-label="Settings sections">
-      <a href="#site-timers">Site timers</a><a href="#adult-sites">Adult websites</a><a href="#x-protection">X protection</a><a href="#about">About</a>
+<div class="page">
+  <header class="page-header">
+    <div class="brand">
+      <img src="icons/tabcloser.svg" alt="" width="34" height="34">
+      <div><h1 class="brand-name">TabCloser</h1><p class="brand-caption">Settings</p></div>
+    </div>
+    <div class="page-meta">
+      <span id="saveStatus" class="save-status" role="status"></span>
+      <span id="extensionVersion"></span>
+    </div>
+  </header>
+
+  <p id="privateWarning" class="notice-banner" role="status" hidden>
+    <strong>TabCloser does not run in private windows.</strong>
+    Timers, adult-site blocking, and X protection are all inactive there. To include them, open <code>about:addons</code>, choose TabCloser, and set <em>Run in Private Windows</em> to <em>Allow</em>.
+  </p>
+
+  <nav id="glance" class="glance" aria-label="At a glance"></nav>
+
+  <div class="shell">
+    <nav class="side-nav" aria-label="Settings sections">
+      <a href="#site-timers" data-section="timers">Site timers</a>
+      <a href="#adult-sites" data-section="adult">Adult websites</a>
+      <a href="#x-protection" data-section="x">X protection</a>
+      <a href="#about">About</a>
+      <p class="nav-note">Locks can’t be shortened or removed early. While something is locked, it can only get stricter.</p>
     </nav>
 
-    <div class="layout">
-      <div class="panels-column">
+    <main class="content">
       <section id="site-timers" class="panel panel-timers" aria-labelledby="rulesTitle" tabindex="-1">
-        <h2 id="rulesTitle">Site timers</h2>
-        <p class="panel-note">
-          Sites listed here close automatically after the chosen amount of <em>active</em>
-          tab time. Optionally, the site stays blocked for a chosen duration after the close.
-        </p>
+        <div class="panel-head">
+          <div>
+            <h2 id="rulesTitle">Site timers</h2>
+            <p class="help">Each site counts only while its tab is focused. At the limit its tabs close, and the site can stay blocked for a while. A rule for <code>example.com</code> also covers its subdomains.</p>
+          </div>
+          <button id="addRule" class="btn btn-green" type="button">+ Add site</button>
+        </div>
         <div id="rules"></div>
-        <button id="addRule" class="primary">+ Add site</button>
+        <p class="help">“Unblock now” asks for a second click to confirm. Deleting a site shows an Undo notice for a few seconds.</p>
       </section>
 
       <section id="adult-sites" class="panel panel-adult" aria-labelledby="adultTitle" tabindex="-1">
-        <h2 id="adultTitle">Adult websites</h2>
-        <p class="panel-note">Block known pornography websites and their subdomains using a bundled list. Matching happens on this device. This does not scan every website for adult content.</p>
-        <label class="toggle"><input id="adultSitesEnabled" type="checkbox"> Block known adult websites</label>
-        <p id="adultListStatus" class="panel-note"></p>
-        <div class="lock-controls">
-            <label for="adultLockAmount">Lock protection for</label>
-            <input id="adultLockAmount" type="number" min="1" step="1" value="60">
-            <select id="adultLockUnit" aria-label="Lock duration unit"><option value="60">minutes</option><option value="3600">hours</option><option value="86400">days</option></select>
-            <button id="adultLockButton" type="button">Lock</button>
-            <span class="lock-or">or until</span>
-            <input id="adultLockDate" type="datetime-local" aria-label="Lock until date">
-            <button id="adultLockDateButton" type="button">Lock until date</button>
-          </div><p id="adultLockStatus" class="lock-status" role="status"></p>
+        <div class="panel-head">
+          <div>
+            <h2 id="adultTitle">Adult websites</h2>
+            <p class="help">Blocks known pornography websites and their subdomains using a list bundled with the extension. Matching happens on this device. It is a known-domain blocker, not a content scanner.</p>
+          </div>
+        </div>
+        <div class="adult-toggle">
+          <label class="switch"><input id="adultSitesEnabled" type="checkbox"> <span>Block known adult websites</span></label>
+          <span id="adultPill" class="pill">Off</span>
+        </div>
+        <div class="adult-facts">
+          <span id="adultListStatus" class="status-line"></span>
+          <span class="status-line">Source: <a href="https://github.com/blocklistproject/Lists" target="_blank" rel="noopener noreferrer">The Block List Project</a> (Unlicense)</span>
+        </div>
+        <div class="option-row">
+          <label class="switch"><input id="adultSafeSearch" type="checkbox"> <span>Enforce SafeSearch on search engines</span></label>
+          <p class="help">Google, Bing, DuckDuckGo, and Brave Search always use their strictest filter, including image search. Needs adult-site blocking on and shares its lock.</p>
+        </div>
+        <div id="adultLock" class="lock-row"></div>
         <p id="adultFeedback" class="inline-feedback" role="status"></p>
-        <p class="panel-note">Enabling this also blocks matching tabs already open. During a lock it cannot be switched off; after the lock expires, protection stays on until you disable it.</p>
-        <p class="panel-note">List: <a href="https://github.com/blocklistproject/Lists" target="_blank" rel="noopener noreferrer">The Block List Project</a> (Unlicense). Included with extension updates; no browsing data is sent to the list provider. Mixed-content sites such as X use separate protection.</p>
+        <p class="help">Turning this on also blocks matching tabs that are already open. If the bundled list ever fails to load, navigation is held and the popup shows “Check settings”. Mixed-content sites such as X use the separate protection below.</p>
       </section>
-      </div>
-      <section id="x-protection" class="panel panel-x x-protection" aria-labelledby="xProtectionTitle" tabindex="-1">
-        <h2 id="xProtectionTitle">X / Twitter protection</h2>
-        <p class="panel-note">Hide media X labels as mature, or add the on-device classifier. Video frames take priority over thumbnails when checks succeed; unavailable video checks fall back to the thumbnail. Enabling the classifier also enables the label tier.</p>
 
-        <div class="tier">
-          <h3>Tier 1 · X's own labels</h3>
-          <label class="toggle"><input id="xLabeledEnabled" type="checkbox"> Hide media X labels as mature</label>
-          <span class="help-tip" tabindex="0" role="note" aria-label="About this mode" data-tip="Only hides media that X itself labels as sensitive (the poster's own flag or X's warning). Mature content the poster did not label is NOT censored. Nothing is analyzed on your device and unlabeled media is untouched.">?</span>
-          <div class="lock-controls">
-            <label for="xLabeledLockAmount">Lock for</label>
-            <input id="xLabeledLockAmount" type="number" min="1" step="1" value="60">
-            <select id="xLabeledLockUnit" aria-label="X labels lock duration unit">
-              <option value="60">minutes</option>
-              <option value="3600">hours</option>
-              <option value="86400">days</option>
-            </select>
-            <button id="lockXLabeled" type="button">Lock</button>
-            <span class="lock-or">or until</span>
-            <input id="xLabeledLockDate" type="datetime-local" aria-label="Lock X labels until date">
-            <button id="lockXLabeledDate" type="button">Lock until date</button>
+      <section id="x-protection" class="panel panel-x" aria-labelledby="xProtectionTitle" tabindex="-1">
+        <div class="panel-head">
+          <div>
+            <h2 id="xProtectionTitle">X / Twitter protection</h2>
+            <p class="help">Hides sensitive media on x.com. Everything runs on this device; no media or scores leave the browser.</p>
           </div>
-          <p id="xLabeledStatus" class="lock-status"></p>
         </div>
 
-        <div class="tier">
-          <h3>Tier 2 · On-device classifier</h3>
-          <label class="toggle"><input id="xModelEnabled" type="checkbox"> Restrictive: also classify all media on-device</label>
-            <span class="help-tip" tabindex="0" role="note" aria-label="About this mode" data-tip="The model can censor harmless media and miss mature media. Images stay covered if their checks fail. Videos use sampled frames when available, otherwise their thumbnail; a missing or unreadable thumbnail alone does not block a video. Uses CPU/GPU while browsing X.">?</span>
-          <div class="sensitivity-row" id="xSensitivityRow">
-            <span>Sensitivity:</span>
-            <label><input type="radio" name="xSensitivity" value="lenient"> Lenient</label>
-            <label><input type="radio" name="xSensitivity" value="balanced"> Balanced</label>
-            <label><input type="radio" name="xSensitivity" value="strict"> Strict</label>
-            <span class="help-tip" tabindex="0" role="note" aria-label="About sensitivity" data-tip="Adjusts how aggressive the classifier is. Strict censors more (more false alarms, fewer misses); Lenient censors less. While the classifier tier is locked, sensitivity can be raised but not lowered.">?</span>
+        <div class="group group-first">
+          <div class="group-head"><h3>Protection level</h3></div>
+          <div class="choices" role="radiogroup" aria-label="Protection level">
+            <label class="choice">
+              <input type="radio" name="xLevel" value="off">
+              <span class="choice-title">Off</span>
+              <span class="choice-desc">Media shows as X shows it. Manual hides and profile protection still apply.</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="xLevel" value="labels">
+              <span class="choice-title">X labels only</span>
+              <span class="choice-desc">Hide media that X or the poster labelled sensitive. Nothing is analysed on your device; unlabelled media is untouched.</span>
+            </label>
+            <div class="choice">
+              <label class="choice-main">
+                <input type="radio" name="xLevel" value="classifier">
+                <span class="choice-title">Labels + on-device classifier</span>
+                <span class="choice-desc">Also check every image and sampled video frames with a local model. Uses CPU/GPU while you browse X. It can hide harmless media and can miss some.</span>
+              </label>
+              <div class="choice-nested">
+                <div class="segmented" role="radiogroup" aria-label="Classifier sensitivity">
+                  <label><input type="radio" name="xSensitivity" value="lenient"> Lenient</label>
+                  <label><input type="radio" name="xSensitivity" value="balanced"> Balanced</label>
+                  <label><input type="radio" name="xSensitivity" value="strict"> Strict</label>
+                </div>
+                <div class="sens-note">
+                  <span><strong>Balanced</strong> is the recommended starting point.</span>
+                  <span><strong>Strict</strong> hides more and misfires more; <strong>Lenient</strong> hides less and needs two strong video frames before blocking.</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="lock-controls">
-            <label for="xModelLockAmount">Lock for</label>
-            <input id="xModelLockAmount" type="number" min="1" step="1" value="60">
-            <select id="xModelLockUnit" aria-label="Classifier lock duration unit">
-              <option value="60">minutes</option>
-              <option value="3600">hours</option>
-              <option value="86400">days</option>
-            </select>
-            <button id="lockXModel" type="button">Lock</button>
-            <span class="lock-or">or until</span>
-            <input id="xModelLockDate" type="datetime-local" aria-label="Lock classifier until date">
-            <button id="lockXModelDate" type="button">Lock until date</button>
-          </div>
-          <p id="xModelStatus" class="lock-status"></p>
+          <div id="xLevelLock" class="lock-row"></div>
         </div>
 
-        <div class="tier">
-          <h3>Censored posts</h3>
-          <div class="option-row">
-            <label class="toggle"><input id="xReplaceText" type="checkbox"> Replace censored post text with Catholic quotes</label>
-            <span class="help-tip" tabindex="0" role="note" aria-label="About this option" data-tip="When a post's media is confirmed sensitive, the post text is swapped for a quotation from a Catholic saint or writer. The original text comes back if the media is released.">?</span>
+        <div class="group">
+          <div class="group-head">
+            <h3>Hidden media</h3>
+            <p class="help">Once media is confirmed sensitive, the original stays in place, heavily blurred and darkened, with a “Sensitive media hidden” notice and a “Why hidden?” button.</p>
           </div>
-          <div class="option-row">
-            <label class="toggle"><input id="xBlockLike" type="checkbox"> Prevent liking censored posts</label>
-            <span class="help-tip" tabindex="0" role="note" aria-label="About this option" data-tip="Blocks the Like button (and the L shortcut) on posts whose media is hidden, so you never endorse content you have not actually seen (the painting is not the real post). Un-liking still works.">?</span>
+          <div class="row">
+            <label class="switch gold"><input id="xSacredArt" type="checkbox"> <span>Cover hidden media with sacred art</span></label>
+            <p class="help">Shows a public-domain painting over the blur. This only changes how hidden media looks, so it can be switched at any time, even while X protection is locked. With it off, clicking hidden media opens “Why hidden?”.</p>
+          </div>
+          <div class="row">
+            <label class="switch gold"><input id="xReplaceText" type="checkbox"> <span>Replace the post text with a Catholic quote</span></label>
+            <p class="help">Applies when a post’s media is confirmed sensitive. The original text comes back if the media is released.</p>
+          </div>
+          <div class="row">
+            <label class="switch gold"><input id="xBlockLike" type="checkbox"> <span>Prevent liking hidden posts</span></label>
+            <p class="help">Disables the Like button and the L shortcut on posts whose media is hidden, so you never endorse what you have not seen. Unliking still works.</p>
           </div>
         </div>
-        <div class="tier">
-          <h3>Temporary reveals</h3>
-          <p class="panel-note">Open “Why hidden?” on a replacement, then hold to reveal. Each post gets at most three seconds total per day, shared across its images and all tabs. Letting go or leaving the tab hides it again; videos stay paused.</p>
-          <label for="xRevealDailySec">Daily allowance in seconds (0 = off)</label>
-          <div class="lock-controls">
-            <input id="xRevealDailySec" type="number" min="0" max="3600" step="1" value="0">
-            <button id="saveXReveal" type="button">Save allowance</button>
+
+        <div class="group" id="x-reveals">
+          <div class="group-head">
+            <h3>Temporary reveals</h3>
+            <p class="help">Inside “Why hidden?”, hold the button to show a post briefly. Each post gets at most 3 seconds a day, shared across its images and all tabs. Letting go, switching tab, or leaving the page hides it again. Videos stay paused.</p>
+          </div>
+          <div class="reveal-field">
+            <label for="xRevealDailySec">Daily allowance</label>
+            <input id="xRevealDailySec" class="input input-num" type="number" min="0" max="3600" step="1" value="0">
+            <span>seconds per day</span>
+            <button id="saveXReveal" class="btn btn-sm" type="button">Save</button>
+            <span class="status-line">0 turns reveals off</span>
           </div>
           <p id="xRevealFeedback" class="inline-feedback" role="status"></p>
-          <p id="xRevealStatus" class="lock-status"></p>
-          <div class="lock-controls">
-            <label for="xRevealLockAmount">Lock allowance for</label>
-            <input id="xRevealLockAmount" type="number" min="1" step="1" value="60">
-            <select id="xRevealLockUnit" aria-label="Lock duration unit"><option value="60">minutes</option><option value="3600">hours</option><option value="86400">days</option></select>
-            <button id="xRevealLockButton" type="button">Lock</button>
-            <span class="lock-or">or until</span>
-            <input id="xRevealLockDate" type="datetime-local" aria-label="Lock until date">
-            <button id="xRevealLockDateButton" type="button">Lock until date</button>
-          </div><p id="xRevealLockStatus" class="lock-status" role="status"></p>
-          <p class="panel-note">Resets at local midnight. Lock this allowance independently, including zero to keep reveals off. While this lock or an X protection lock is active, the allowance may only decrease. Refreshes preserve usage; an interrupted reveal may use its full reservation.</p>
+          <p id="xRevealStatus" class="status-line reveal-status"></p>
+          <div id="xRevealLock" class="lock-row"></div>
         </div>
-        <div class="tier">
-          <h3>Manual hides</h3>
-          <p class="panel-note">Right-click an X post or its media, then choose TabCloser → hide this post’s text or hide this image / video. Author details and post actions remain visible. Older whole-post choices now hide text and media individually. Choices stay on this device even when automatic protection is off. Removing them is unavailable while X protection is locked.</p>
-          <details><summary id="xManualSummary">Saved hides</summary><div id="xManualHides"></div></details>
+
+        <div class="group" id="x-profile">
+          <div class="group-head">
+            <h3>Profile protection</h3>
+            <p class="help">Works from <strong>account flags</strong>: accounts that X itself marks as sensitive. Profile pictures are not checked by the classifier. A flag lasts only for the current page session and is never saved, so a mistaken flag can’t censor an account for good.</p>
+          </div>
+          <div class="row">
+            <label class="check gold"><input id="xProfileMarkers" type="checkbox"> <span>Also flag accounts with an 18+, NSFW, 🔞, OnlyFans, or Fansly marker in their name or bio</span></label>
+          </div>
+
+          <h4 class="subhead">Profile pictures and banners</h4>
+          <div class="segmented" role="radiogroup" aria-label="Blur profile images for">
+            <label><input type="radio" name="xProfileImages" value="off"> Off</label>
+            <label><input type="radio" name="xProfileImages" value="flagged"> Flagged accounts only</label>
+            <label><input type="radio" name="xProfileImages" value="everyone"> Everyone except accounts I follow</label>
+          </div>
+          <div class="row">
+            <label class="switch gold"><input id="xProfileAvatars" type="checkbox"> <span>Blur profile pictures</span></label>
+            <p class="help">In timelines, replies, lists, and on profile pages. Your own picture is never blurred.</p>
+          </div>
+          <div class="row">
+            <label class="switch gold"><input id="xProfileBanners" type="checkbox"> <span>Blur profile banners</span></label>
+          </div>
+
+          <h4 class="subhead">Flagged accounts only</h4>
+          <p class="help">Blurring images is quiet, so it can apply to strangers broadly. Replacing names and collapsing replies change how threads read, so they only ever apply to flagged accounts.</p>
+          <div class="row">
+            <label class="switch gold"><input id="xProfileNames" type="checkbox"> <span>Replace display names</span></label>
+            <p class="help">The @handle stays visible so accounts can still be told apart.</p>
+            <div class="alias-choices" role="radiogroup" aria-label="Alias style">
+              <label class="choice">
+                <input type="radio" name="xProfileAlias" value="plain">
+                <span class="choice-title">Plain</span>
+                <span class="choice-desc">Every flagged account shows as <span class="alias-sample">Hidden account</span>.</span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="xProfileAlias" value="virtue">
+                <span class="choice-title">Virtue name</span>
+                <span class="choice-desc">A Catholic virtue that stays the same for each account, so reply threads stay readable: <span class="alias-sample">Temperance ✝</span>, <span class="alias-sample">Patience ✝</span>, <span class="alias-sample">Fortitude ✝</span>, and others. The cross marks it as an alias.</span>
+              </label>
+            </div>
+          </div>
+          <div class="row">
+            <label class="switch gold"><input id="xProfileCollapse" type="checkbox"> <span>Collapse replies from flagged accounts</span></label>
+            <p class="help">Replies fold into one line. “Show…” opens “Why hidden?” and uses the same hold-to-reveal allowance as media; there is no one-click reveal.</p>
+          </div>
+          <p id="xProfileFeedback" class="inline-feedback" role="status"></p>
+          <p id="xProfileLockNote" class="help lock-icon" hidden></p>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Manual hides</h3>
+            <p class="help">Right-click a post or its media on X, then choose <strong>TabCloser: hide this post’s text</strong> or <strong>hide this image / video</strong>. Choices are saved on this device and still apply when the level is Off.</p>
+          </div>
+          <details>
+            <summary id="xManualSummary">0 saved hides</summary>
+            <ul id="xManualHides" class="hide-list"></ul>
+            <p id="xManualLockNote" class="help lock-icon" hidden></p>
+          </details>
         </div>
       </section>
-    </div>
 
-    <p id="saveStatus" class="save-status"></p>
-    <section id="about" class="about-panel" aria-labelledby="aboutTitle" tabindex="-1">
-      <div class="about-heading"><h2 id="aboutTitle">About TabCloser</h2><span id="extensionVersion"></span></div>
-      <p>One place for site timers, known adult-site blocking, and sensitive-media protection on X.</p>
-      <div class="about-grid">
-        <div><h3>On your device</h3><p>Classification and domain matching run locally. Rules, locks, manual hides, and reveal usage stay in this browser profile. TabCloser does not upload your browsing history or media for analysis.</p></div>
-        <div><h3>Browser access</h3><p>Website access lets TabCloser enforce your site rules and protect media on X. Locks protect settings inside TabCloser; the browser can still disable or remove the extension.</p></div>
-      </div>
-      <div class="about-links"><a href="https://github.com/PietroFilippo/TabCloser#readme" target="_blank" rel="noopener noreferrer">Usage &amp; project</a><a href="https://github.com/PietroFilippo/TabCloser/issues" target="_blank" rel="noopener noreferrer">Report an issue</a><a href="THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a></div>
-    </section>
-  </main>
-  <script src="common.js"></script>
-  <script src="options.js"></script>
+      <section id="about" class="panel about" aria-labelledby="aboutTitle" tabindex="-1">
+        <div class="panel-head">
+          <div><h2 id="aboutTitle">About TabCloser</h2><p class="help">Site timers, known adult-site blocking, and sensitive-media protection on X.</p></div>
+        </div>
+        <div class="about-grid">
+          <div><h3>On your device</h3><p>Classification and domain matching run locally. Rules, locks, manual hides, and reveal usage stay in this browser profile. TabCloser does not upload your browsing history or media for analysis.</p></div>
+          <div><h3>Browser access</h3><p>Website access lets TabCloser enforce your rules and protect media on X. Locks protect settings inside TabCloser; the browser can still disable or remove the extension.</p></div>
+        </div>
+        <div class="about-links"><a href="https://github.com/PietroFilippo/TabCloser#readme" target="_blank" rel="noopener noreferrer">Usage &amp; project</a><a href="https://github.com/PietroFilippo/TabCloser/issues" target="_blank" rel="noopener noreferrer">Report an issue</a><a href="THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a></div>
+      </section>
+    </main>
+  </div>
+</div>
+<script src="common.js"></script>
+<script src="options.js"></script>
 </body>
 </html>

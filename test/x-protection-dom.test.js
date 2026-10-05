@@ -26,6 +26,7 @@ async function startCoordinator(html, {
   prepare,
   interactions = false,
   controlMessage,
+  sacredArt = false,
   url = 'https://x.com/search?q=test&src=typed_query&f=media',
 } = {}) {
   const dom = new JSDOM(html, {
@@ -95,9 +96,12 @@ async function startCoordinator(html, {
     storage: {
       local: {
         get: async () => ({
-          xProtection: config || {
-            labeled: { enabled: true },
-            model: { enabled: true, sensitivity: 'balanced' },
+          xProtection: {
+            ...(config || {
+              labeled: { enabled: true },
+              model: { enabled: true, sensitivity: 'balanced' },
+            }),
+            ...(sacredArt ? { sacredArt: true } : {}),
           },
         }),
       },
@@ -140,7 +144,7 @@ test('a native X mature-content warning tile is replaced and cannot open the pos
         <div><span>Warning: Nudity</span></div>
       </a>
     </main>
-  `, {
+  `, { sacredArt: true,
     config: {
       labeled: { enabled: true },
       model: { enabled: false, sensitivity: 'balanced' },
@@ -615,7 +619,7 @@ test('replacement artwork never becomes a media root or classifier input', async
         '<img src="https://pbs.twimg.com/media/protected.jpg">' +
       '</div>' +
     '</a></main>',
-    { classify: () => ({ verdict: 'protect', reason: 'visual' }) },
+    { sacredArt: true, classify: () => ({ verdict: 'protect', reason: 'visual' }) },
   );
 
   try {
@@ -700,6 +704,7 @@ test('replacement artwork stays stable while X changes the media source', async 
       '</div>' +
     '</a></article>',
     {
+      sacredArt: true,
       prepare(window) {
         window.TabCloserSacredArt = Array.from({ length: 97 }, (_, index) => 'painting-' + index + '.jpg');
       },
@@ -978,6 +983,7 @@ test('a direct-video mature verdict persists for remounted media without a secon
     '</a></article>',
     {
       url: 'https://x.com/example/status/' + tweetId,
+      sacredArt: true,
       prepare(window) {
         const createElement = window.document.createElement.bind(window.document);
         window.document.createElement = function createElementWithVideoProbe(tagName, options) {
@@ -1592,6 +1598,7 @@ test('the painting is picked to match the censored cell shape', async () => {
         '</div>' +
       '</a></article>',
       {
+        sacredArt: true,
         prepare(window) {
           window.TabCloserSacredArt = [
             { file: 'wide-painting.jpg', aspect: 2.4 },
@@ -1634,7 +1641,7 @@ test('the painting renders as one blurred backdrop plus one contained copy, neve
         '<img src="https://pbs.twimg.com/media/dup-fixture.jpg">' +
       '</div>' +
     '</a></article>',
-    { classify: () => ({ verdict: 'protect', reason: 'visual' }) },
+    { sacredArt: true, classify: () => ({ verdict: 'protect', reason: 'visual' }) },
   );
 
   try {
@@ -1665,6 +1672,7 @@ test('a painting is applied only after it decodes, never while partially loaded'
       '</div>' +
     '</a></article>',
     {
+      sacredArt: true,
       prepare(window) {
         window.__pendingArtImages = [];
         window.__artImageLoader = image => window.__pendingArtImages.push(image);
@@ -1782,5 +1790,64 @@ test('manual text is independent of media and remains hidden across protection c
     await h.sendContentMessage({type:'xControlsChanged',snapshot:{posts:[],texts:[],media:[]}});
     assert.equal(text.classList.contains('tabcloser-hidden-text'),false);
     assert.equal(h.window.document.querySelector('.tabcloser-manual-text-notice'),null);
+  } finally { h.dom.window.close(); }
+});
+
+test('blur is the default cover: no painting, and a click on the media explains instead of enlarging', async () => {
+  const h = await startCoordinator(controlFixture, { interactions: true,
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.83 }) });
+  try {
+    const root = h.window.document.querySelector('#controlled-image');
+    const overlay = root.closest('a').querySelector('.tabcloser-media-overlay');
+    assert.equal(root.dataset.tabcloserMediaState, 'protected');
+    assert.ok(overlay.classList.contains('tabcloser-media-overlay-blur'));
+    assert.equal(overlay.querySelector('.tabcloser-overlay-artwork'), null, 'blur mode never paints artwork');
+    assert.match(overlay.textContent, /Sensitive media hidden/);
+    const click = new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    overlay.dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, 'X must not open its photo modal');
+    assert.equal(h.window.document.querySelector('.tabcloser-lightbox'), null);
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /image.*0\.830/);
+  } finally { h.dom.window.close(); }
+});
+
+test('switching sacred art redraws covers in place without classifying again', async () => {
+  const config = { labeled: { enabled: true }, model: { enabled: true, sensitivity: 'balanced' } };
+  const h = await startCoordinator(controlFixture, { config, interactions: true,
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.83 }) });
+  try {
+    const root = h.window.document.querySelector('#controlled-image');
+    const host = root.closest('a');
+    const checks = h.classificationMessages.length;
+    await h.sendContentMessage({ type: 'xProtectionChanged', xProtection: { ...config, sacredArt: true } });
+    assert.ok(host.querySelector('.tabcloser-media-overlay-art .tabcloser-overlay-artwork'));
+    assert.equal(root.dataset.tabcloserMediaState, 'protected');
+    assert.ok(host.querySelector('.tabcloser-media-actions button'), '"Why hidden?" survives the redraw');
+    await h.sendContentMessage({ type: 'xProtectionChanged', xProtection: { ...config, sacredArt: false } });
+    assert.ok(host.querySelector('.tabcloser-media-overlay-blur'));
+    assert.equal(host.querySelector('.tabcloser-overlay-artwork'), null);
+    assert.equal(h.classificationMessages.length, checks, 'a presentation change keeps every verdict');
+  } finally { h.dom.window.close(); }
+});
+
+test('link-preview images are classified and covered as their own cells, never the whole card', async () => {
+  const h = await startCoordinator(`
+    <article><a href="/example/status/555"><time>1h</time></a>
+      <div data-testid="card.wrapper"><a href="https://t.co/abc">
+        <div id="card-media" data-testid="card.layoutLarge.media"><img src="https://pbs.twimg.com/card_img/1/preview.jpg"></div>
+        <div id="card-text">example.com · Article title</div>
+      </a></div>
+    </article>`, {
+    url: 'https://x.com/home',
+    classify: message => message.mediaKey.includes('card_img') ? { verdict: 'protect', reason: 'visual', adultScore: 0.9 } : { verdict: 'safe', reason: 'visual' },
+  });
+  try {
+    const media = h.window.document.getElementById('card-media');
+    assert.equal(media.dataset.tabcloserMediaState, 'protected');
+    assert.ok(h.classificationMessages.some(message => message.url?.includes('/card_img/')));
+    assert.equal(h.window.document.getElementById('card-text').closest('[data-tabcloser-media-state]'), null, 'card text stays readable');
+    const click = new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    media.dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, 'a covered preview cannot open its link');
   } finally { h.dom.window.close(); }
 });

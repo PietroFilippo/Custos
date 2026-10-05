@@ -1,42 +1,38 @@
 const $rules = document.getElementById('rules');
-document.getElementById('extensionVersion').textContent = `Version ${browser.runtime.getManifest().version}`;
 const $save = document.getElementById('saveStatus');
 const $add = document.getElementById('addRule');
-const $xLabeled = document.getElementById('xLabeledEnabled');
-const $xLabeledLockAmount = document.getElementById('xLabeledLockAmount');
-const $xLabeledLockUnit = document.getElementById('xLabeledLockUnit');
-const $xLabeledLockButton = document.getElementById('lockXLabeled');
-const $xLabeledLockDate = document.getElementById('xLabeledLockDate');
-const $xLabeledLockDateButton = document.getElementById('lockXLabeledDate');
-const $xLabeledStatus = document.getElementById('xLabeledStatus');
-const $xModel = document.getElementById('xModelEnabled');
+const $glance = document.getElementById('glance');
+const $xLevelRadios = [...document.querySelectorAll('input[name="xLevel"]')];
 const $xSensitivityRadios = [...document.querySelectorAll('input[name="xSensitivity"]')];
+const $xSacredArt = document.getElementById('xSacredArt');
 const $xReplaceText = document.getElementById('xReplaceText');
 const $xBlockLike = document.getElementById('xBlockLike');
 const $xReveal = document.getElementById('xRevealDailySec');
 const $xRevealStatus = document.getElementById('xRevealStatus');
 const $xManualHides = document.getElementById('xManualHides');
-let manualListKey = '';
-let revealDraft = false;
-let revealFeedbackTimer;
-function revealFeedback(message, error = false) {
-  const node = document.getElementById('xRevealFeedback');
-  clearTimeout(revealFeedbackTimer);
-  node.textContent = message;
-  node.classList.toggle('feedback-error', error);
-  if (!error) revealFeedbackTimer = setTimeout(() => { node.textContent = ''; }, 3000);
-}
+const $adultEnabled = document.getElementById('adultSitesEnabled');
+const $adultSafeSearch = document.getElementById('adultSafeSearch');
+const $profile = {
+  markers: document.getElementById('xProfileMarkers'),
+  images: [...document.querySelectorAll('input[name="xProfileImages"]')],
+  avatars: document.getElementById('xProfileAvatars'),
+  banners: document.getElementById('xProfileBanners'),
+  names: document.getElementById('xProfileNames'),
+  alias: [...document.querySelectorAll('input[name="xProfileAlias"]')],
+  collapse: document.getElementById('xProfileCollapse'),
+};
+document.getElementById('extensionVersion').textContent = `Version ${browser.runtime.getManifest().version}`;
+
 const sensitivityRank = { lenient: 0, balanced: 1, strict: 2 };
-const $xModelLockAmount = document.getElementById('xModelLockAmount');
-const $xModelLockUnit = document.getElementById('xModelLockUnit');
-const $xModelLockButton = document.getElementById('lockXModel');
-const $xModelLockDate = document.getElementById('xModelLockDate');
-const $xModelLockDateButton = document.getElementById('lockXModelDate');
-const $xModelStatus = document.getElementById('xModelStatus');
+const imageScopeRank = { off: 0, flagged: 1, everyone: 2 };
+const levelLabels = { off: 'Off', labels: 'X labels only', classifier: 'Labels + classifier' };
+const lockPresets = [['1 hour', 3600], ['1 day', 86400], ['1 week', 604800], ['30 days', 2592000]];
 
 let snapshot = { rules: [], accumSec: {}, blocks: {}, focus: {}, xProtection: {} };
 let workingRules = null;
 let saveT = null;
+let manualListKey = '';
+let revealDraft = false;
 
 function el(tag, attrs, children) {
   const e = document.createElement(tag);
@@ -59,6 +55,22 @@ function el(tag, attrs, children) {
 
 function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+// Rebuilds a region only when what it shows changes, so a 1 s refresh never
+// steals keyboard focus or closes an open lock popover.
+function renderOnce(container, key, build) {
+  if (container.dataset.renderKey === key) return;
+  container.dataset.renderKey = key;
+  container.replaceChildren(...[].concat(build() || []).filter(Boolean));
+}
+
+function feedback(id, message, error = false) {
+  const node = document.getElementById(id);
+  clearTimeout(Number(node.dataset.timer));
+  node.textContent = message;
+  node.classList.toggle('feedback-error', error);
+  if (!error) node.dataset.timer = String(setTimeout(() => { node.textContent = ''; }, 3000));
 }
 
 // Inline two-click confirm: native confirm() is unreliable on extension option
@@ -87,17 +99,6 @@ function isLocked(until) {
   return Number.isFinite(until) && until > Date.now();
 }
 
-function lockText(until) {
-  return 'Locked until ' + new Date(until).toLocaleString() + '.';
-}
-
-function durationSecFrom(amountInput, unitSelect) {
-  const amount = Number(amountInput.value);
-  const unitSec = Number(unitSelect.value);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return Math.round(amount * unitSec);
-}
-
 function durationSecUntilDate(dateInput) {
   if (!dateInput.value) return null;
   const target = new Date(dateInput.value).getTime();
@@ -105,6 +106,98 @@ function durationSecUntilDate(dateInput) {
   return Math.round((target - Date.now()) / 1000);
 }
 
+function minutesText(sec) {
+  return String(Math.round((sec / 60) * 100) / 100) + ' min';
+}
+
+// === Locks: one control and one banner for every lockable setting ===
+let openPopover = null;
+
+function closePopover(focusTrigger = false) {
+  if (!openPopover) return;
+  const { pop, trigger } = openPopover;
+  openPopover = null;
+  pop.hidden = true;
+  trigger.setAttribute('aria-expanded', 'false');
+  if (focusTrigger) trigger.focus();
+}
+
+document.addEventListener('click', event => {
+  if (openPopover && !(event.target instanceof Element && event.target.closest('.lock-control'))) closePopover();
+});
+
+// onLock(durationSec) resolves to an error message, or nothing on success.
+function lockControl({ label = 'Lock…', title, scope, help, onLock }) {
+  let choice = 86400;
+  const trigger = el('button', { type: 'button', class: 'btn btn-lock btn-sm lock-icon', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' }, label);
+  const dateInput = el('input', { class: 'input', type: 'datetime-local', 'aria-label': 'Lock until' });
+  const dateField = el('label', { class: 'date-field', hidden: true }, ['Until', dateInput]);
+  const error = el('p', { class: 'lock-error', role: 'alert' });
+  const confirm = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, 'Lock for 1 day');
+  const cancel = el('button', { type: 'button', class: 'btn btn-quiet btn-sm' }, 'Cancel');
+  const presets = [...lockPresets, ['Until a date…', 'date']].map(([text, value]) => {
+    const button = el('button', { type: 'button', 'aria-pressed': String(value === choice) }, text);
+    button.addEventListener('click', () => {
+      choice = value;
+      for (const other of presets) other.setAttribute('aria-pressed', String(other === button));
+      dateField.hidden = value !== 'date';
+      confirm.textContent = value === 'date' ? 'Lock until date' : 'Lock for ' + text;
+      error.textContent = '';
+      if (value === 'date') dateInput.focus();
+    });
+    return button;
+  });
+  const pop = el('div', { class: 'lock-popover', role: 'dialog', 'aria-label': title, hidden: true }, [
+    el('p', { class: 'lock-popover-title' }, title),
+    scope ? el('p', { class: 'scope' }, scope) : null,
+    el('p', { class: 'help' }, help),
+    el('div', { class: 'presets', role: 'group', 'aria-label': 'Lock duration' }, presets),
+    dateField,
+    error,
+    el('div', { class: 'actions' }, [cancel, confirm]),
+  ]);
+  trigger.addEventListener('click', () => {
+    const opening = pop.hidden;
+    closePopover();
+    if (!opening) return;
+    pop.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    openPopover = { pop, trigger };
+    presets.find(button => button.getAttribute('aria-pressed') === 'true')?.focus();
+  });
+  cancel.addEventListener('click', () => closePopover(true));
+  pop.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.stopPropagation(); closePopover(true); }
+  });
+  confirm.addEventListener('click', async () => {
+    const durationSec = choice === 'date' ? durationSecUntilDate(dateInput) : choice;
+    if (durationSec == null || durationSec < 60) {
+      error.textContent = 'Choose a date at least one minute from now.';
+      return;
+    }
+    confirm.disabled = true;
+    const message = await onLock(durationSec);
+    confirm.disabled = false;
+    if (message) error.textContent = message;
+    else closePopover();
+  });
+  return el('div', { class: 'lock-control' }, [trigger, pop]);
+}
+
+function lockBanner(until, help, title = 'Locked until ' + formatLockDate(until)) {
+  return el('div', { class: 'lock-banner' }, el('div', null, [
+    el('strong', null, title),
+    ' · ' + formatTimeLeft(until - Date.now()) + ' left',
+    el('span', { class: 'help' }, help),
+  ]));
+}
+
+// A lock banner's "time left" changes each minute; only then is it redrawn.
+function lockKey(until) {
+  return isLocked(until) ? 'locked:' + until + ':' + Math.ceil((until - Date.now()) / 60000) : 'open';
+}
+
+// === Snapshot ===
 function defaultRule() {
   return {
     id: uuid(),
@@ -126,152 +219,146 @@ async function initialLoad() {
   await refreshSnapshot();
   workingRules = snapshot.rules.map(rule => ({ ...rule }));
   render();
-  renderXProtection();
+  renderSettings();
 }
 
+// === Site timers ===
 function render() {
+  closePopover();
   clear($rules);
   if (!workingRules || !workingRules.length) {
-    $rules.appendChild(el('p', { class: 'empty-list' }, 'No sites yet. Click "+ Add site" below.'));
+    $rules.appendChild(el('p', { class: 'empty-list' }, 'No sites yet. Use “+ Add site” to set a limit.'));
     return;
   }
   workingRules.forEach(rule => $rules.appendChild(renderRule(rule)));
 }
 
-function buildStatus(rule) {
+function setStatus(card, rule) {
   const key = normalizeRuleDomain(rule.domain);
-  const accum = snapshot.accumSec[key] ?? 0;
-  const applicableBlock = activeBlockForHost(snapshot.blocks, key);
+  const accum = snapshot.accumSec?.[key] ?? 0;
+  const applicableBlock = key ? activeBlockForHost(snapshot.blocks || {}, key) : null;
   const block = applicableBlock?.block;
   const blockActive = applicableBlock?.key === key;
-  const frag = document.createDocumentFragment();
+  const counting = !!key && snapshot.focus?.domain === key && snapshot.focus.enteredAt != null;
+  const locked = isLocked(rule.disableLockedUntil);
+  const remainingBlock = block ? (block.until - Date.now()) / 1000 : 0;
 
-  frag.appendChild(el('span', null, [
-    'Active time: ',
-    el('strong', null, formatDuration(accum)),
-    ' / ' + formatDuration(rule.closeAfterSec),
-  ]));
-  frag.appendChild(el('button', { class: 'reset', 'data-action': 'reset' }, 'Reset timer'));
+  card.classList.toggle('is-counting', counting && !applicableBlock);
+  card.classList.toggle('is-blocked', !!applicableBlock);
+  card.classList.toggle('is-locked', locked && !applicableBlock && !counting);
+  const pill = card.querySelector('.rule-head .pill');
+  pill.hidden = !key;
+  pill.className = 'pill ' + (applicableBlock ? 'pill-blocked' : counting ? 'pill-counting' : '');
+  pill.textContent = applicableBlock ? 'Blocked · ' + formatTimeLeftShort(remainingBlock * 1000)
+    : !rule.enabled ? 'Off' : counting ? 'Counting' : 'Paused';
 
+  const usage = card.querySelector('.rule-usage');
+  const pct = blockActive ? 100 : Math.min(100, (accum / rule.closeAfterSec) * 100);
+  const fill = blockActive ? 'danger' : pct > 90 ? 'danger' : pct > 60 ? 'warn' : '';
+  const lines = [el('div', { class: 'bar' }, el('div', { class: 'bar-fill' + (fill ? ' ' + fill : ''), style: `width:${pct}%` }))];
   if (blockActive) {
-    const unblockLocked = rule.lockUnblock && isLocked(rule.disableLockedUntil);
-    frag.appendChild(el('div', { class: 'blocked-line' }, [
-      'Blocked; unblocks in ' + formatDuration((block.until - Date.now()) / 1000),
-      unblockLocked
-        ? el('span', { class: 'unblock-locked' }, '· early unblock locked')
-        : el('button', { class: 'unblock', 'data-action': 'unblock' }, 'Unblock now'),
+    lines.push(el('p', { class: 'status-line warn' }, ['Blocked for ', el('strong', null, formatDuration(remainingBlock)), ' more. The timer resets when the block ends.']));
+  } else {
+    lines.push(el('p', { class: 'status-line' }, [
+      el('strong', null, formatDuration(accum)), ' of ' + formatDuration(rule.closeAfterSec) + ' used · ',
+      counting ? 'closes in ' + formatDuration(rule.closeAfterSec - accum) : 'resumes when a tab is focused',
     ]));
   }
-  if (applicableBlock && applicableBlock.key !== key) {
-    frag.appendChild(el('div', { class: 'blocked-line' },
-      `Blocked by ${applicableBlock.key} for ${formatDuration((block.until - Date.now()) / 1000)}. Manage that site's rule to unblock.`));
+  if (applicableBlock && !blockActive) {
+    lines.push(el('p', { class: 'status-line warn' },
+      `Blocked by ${applicableBlock.key} for ${formatDuration(remainingBlock)}. Manage that site's rule to unblock.`));
   }
-  return frag;
-}
+  usage.replaceChildren(...lines);
 
-function setStatus(statusEl, rule) {
-  clear(statusEl);
-  statusEl.appendChild(buildStatus(rule));
-  statusEl.querySelector('[data-action="reset"]')?.addEventListener('click', async () => {
+  const buttons = card.querySelector('.rule-buttons');
+  const reset = el('button', { type: 'button', class: 'btn btn-quiet btn-sm', 'data-action': 'reset' }, 'Reset timer');
+  reset.addEventListener('click', async () => {
     await browser.runtime.sendMessage({ type: 'resetAccum', domain: rule.domain });
     await refreshSnapshot();
-    setStatus(statusEl, rule);
+    setStatus(card, rule);
   });
-  const unblockBtn = statusEl.querySelector('[data-action="unblock"]');
-  unblockBtn?.addEventListener('click', () => armConfirm(unblockBtn, 'Confirm unblock', async () => {
-    const response = await browser.runtime.sendMessage({ type: 'unblock', domain: rule.domain });
-    if (!response.ok) showSaveError(response.error);
-    await refreshSnapshot();
-    setStatus(statusEl, rule);
-  }));
+  const children = [reset];
+  if (blockActive) {
+    if (rule.lockUnblock && isLocked(rule.disableLockedUntil)) {
+      children.push(el('span', { class: 'status-line warn lock-icon' }, 'Early unblock is locked'));
+    } else {
+      const unblock = el('button', { type: 'button', class: 'btn btn-amber btn-sm', 'data-action': 'unblock' }, 'Unblock now');
+      unblock.addEventListener('click', () => armConfirm(unblock, 'Confirm unblock', async () => {
+        const response = await browser.runtime.sendMessage({ type: 'unblock', domain: rule.domain });
+        if (!response.ok) showSaveError(response.error);
+        await refreshSnapshot();
+        setStatus(card, rule);
+      }));
+      children.push(unblock);
+    }
+  }
+  // Keep an armed "Confirm unblock" button through the 1 s refresh.
+  if (!buttons.querySelector('[data-armed="yes"]')) buttons.replaceChildren(...children);
 }
 
-function lockControls(rule, locked) {
-  if (locked) return el('div', { class: 'rule-lock' }, '🔒 ' + lockText(rule.disableLockedUntil));
-  const amount = el('input', { type: 'number', min: '1', step: '1', value: '60' });
-  const unit = el('select', null, [
-    el('option', { value: '60' }, 'minutes'),
-    el('option', { value: '3600' }, 'hours'),
-    el('option', { value: '86400' }, 'days'),
-  ]);
-  const date = el('input', { type: 'datetime-local' });
-
-  async function lockRule(durationSec) {
-    if (durationSec == null || durationSec < 60) return showSaveError('Choose a duration of at least one minute (dates must be in the future).');
-    const saved = await save();
-    if (!saved) return;
-    const response = await browser.runtime.sendMessage({ type: 'lockRule', id: rule.id, durationSec });
-    if (!response.ok) return showSaveError(response.error);
-    await initialLoad();
-  }
-
-  const durationButton = el('button', { type: 'button' }, 'Lock');
-  durationButton.addEventListener('click', () => lockRule(durationSecFrom(amount, unit)));
-  const dateButton = el('button', { type: 'button' }, 'Lock until date');
-  dateButton.addEventListener('click', () => lockRule(durationSecUntilDate(date)));
-
-  return el('div', { class: 'lock-controls' }, [
-    el('label', null, 'Lock rule for'),
-    amount,
-    unit,
-    durationButton,
-    el('span', { class: 'lock-or' }, 'or until'),
-    date,
-    dateButton,
-  ]);
+function ruleScope(rule) {
+  const domain = normalizeRuleDomain(rule.domain) || 'This site';
+  return domain + ' · ' + minutesText(rule.closeAfterSec) +
+    (rule.blockAfterClose ? ', then blocked for ' + minutesText(rule.blockDurationSec) : ', no block after close');
 }
 
 function renderRule(rule) {
   const locked = isLocked(rule.disableLockedUntil);
-  const div = el('div', { class: 'rule' + (rule.enabled ? '' : ' disabled') });
+  const card = el('article', { class: 'rule' + (rule.enabled ? '' : ' disabled') });
 
-  const domainInput = el('input', { type: 'text', placeholder: 'e.g. x.com' });
+  const domainInput = el('input', { class: 'input domain-input', type: 'text', placeholder: 'e.g. x.com', 'aria-label': 'Domain', disabled: locked });
   domainInput.value = rule.domain;
-  domainInput.disabled = locked;
-  const delBtn = el('button', { class: 'del', type: 'button', 'aria-label': 'Delete site' }, '×');
-  delBtn.disabled = locked;
-  div.appendChild(el('div', { class: 'rule-header' }, [domainInput, delBtn]));
-
-  const closeAfterInput = el('input', { type: 'number', min: '0.1', step: '0.1' });
-  closeAfterInput.value = String(Math.round((rule.closeAfterSec / 60) * 100) / 100);
-  closeAfterInput.disabled = locked;
-  div.appendChild(el('div', { class: 'field' }, [
-    el('label', null, 'Close after'),
-    closeAfterInput,
-    el('span', null, 'min of active time'),
-  ]));
-
-  const blockCheckbox = el('input', { type: 'checkbox' });
-  blockCheckbox.checked = rule.blockAfterClose;
-  blockCheckbox.disabled = locked;
-  const blockDurInput = el('input', { type: 'number', min: '0.1', step: '0.1' });
-  blockDurInput.value = String(Math.round((rule.blockDurationSec / 60) * 100) / 100);
-  blockDurInput.disabled = locked || !rule.blockAfterClose;
-  div.appendChild(el('div', { class: 'field' }, [
-    el('label', { class: 'toggle' }, [blockCheckbox, ' Block after close for']),
-    blockDurInput,
-    el('span', null, 'min'),
-  ]));
-
-  const lockUnblockCheckbox = el('input', { type: 'checkbox' });
-  lockUnblockCheckbox.checked = !!rule.lockUnblock;
-  lockUnblockCheckbox.disabled = locked;
-  div.appendChild(el('div', { class: 'field' }, [
-    el('label', { class: 'toggle' }, [lockUnblockCheckbox, ' Lock also prevents "Unblock now"']),
-  ]));
-
-  const enabledCheckbox = el('input', { type: 'checkbox' });
+  const enabledCheckbox = el('input', { type: 'checkbox', disabled: locked });
   enabledCheckbox.checked = rule.enabled;
-  enabledCheckbox.disabled = locked;
-  div.appendChild(el('div', { class: 'field' }, [
-    el('label', { class: 'toggle' }, [enabledCheckbox, ' Enabled']),
+  const delBtn = el('button', { class: 'btn btn-icon btn-danger del', type: 'button', 'aria-label': 'Delete site', disabled: locked }, '×');
+  card.appendChild(el('div', { class: 'rule-head' }, [
+    domainInput,
+    el('span', { class: 'pill', hidden: true }),
+    el('span', { class: 'spacer' }),
+    el('label', { class: 'switch' }, [enabledCheckbox, el('span', null, 'Enabled')]),
+    delBtn,
   ]));
 
-  div.appendChild(lockControls(rule, locked));
+  const closeAfterInput = el('input', { class: 'input input-num', type: 'number', min: '0.1', step: '0.1', disabled: locked });
+  closeAfterInput.value = String(Math.round((rule.closeAfterSec / 60) * 100) / 100);
+  const blockCheckbox = el('input', { type: 'checkbox', disabled: locked, 'aria-label': 'Block after close' });
+  blockCheckbox.checked = rule.blockAfterClose;
+  const blockDurInput = el('input', { class: 'input input-num', type: 'number', min: '0.1', step: '0.1', 'aria-label': 'Block duration in minutes', disabled: locked || !rule.blockAfterClose });
+  blockDurInput.value = String(Math.round((rule.blockDurationSec / 60) * 100) / 100);
+  card.appendChild(el('div', { class: 'rule-fields' }, [
+    el('label', { class: 'field' }, ['Close after', closeAfterInput, 'min of active time']),
+    el('span', { class: 'field' }, [el('label', { class: 'check' }, [blockCheckbox, el('span', null, 'Block for')]), blockDurInput, 'min after close']),
+  ]));
 
-  const statusEl = el('div', { class: 'status' });
-  setStatus(statusEl, rule);
-  div.appendChild(statusEl);
+  const lockUnblockCheckbox = el('input', { type: 'checkbox', disabled: locked });
+  lockUnblockCheckbox.checked = !!rule.lockUnblock;
+  card.appendChild(el('div', { class: 'rule-fields' }, [
+    el('label', { class: 'check' }, [lockUnblockCheckbox, el('span', null, 'A lock also prevents “Unblock now”')]),
+  ]));
+
+  if (locked) {
+    card.appendChild(lockBanner(rule.disableLockedUntil, 'Settings, the enable switch, and delete are unavailable until then' +
+      (rule.lockUnblock ? ', and so is early unblock.' : '. “Unblock now” stays available.')));
+  }
+
+  const actions = el('div', { class: 'rule-actions' }, el('div', { class: 'rule-buttons' }));
+  if (!locked) {
+    actions.appendChild(lockControl({
+      title: 'Lock this rule',
+      scope: ruleScope(rule),
+      help: 'Until the lock ends, the rule can’t be changed, turned off, or deleted' +
+        (rule.lockUnblock ? ', and its block can’t be ended early' : '') + '. A lock can’t be shortened.',
+      async onLock(durationSec) {
+        const saved = await save();
+        if (!saved) return $save.textContent;
+        const response = await browser.runtime.sendMessage({ type: 'lockRule', id: rule.id, durationSec });
+        if (!response.ok) return response.error;
+        await initialLoad();
+      },
+    }));
+  }
+  card.appendChild(el('div', { class: 'rule-foot' }, [el('div', { class: 'rule-usage status' }), actions]));
+  setStatus(card, rule);
 
   domainInput.addEventListener('input', event => { rule.domain = event.target.value; scheduleSave(); });
   closeAfterInput.addEventListener('input', event => {
@@ -299,7 +386,7 @@ function renderRule(rule) {
   });
   enabledCheckbox.addEventListener('change', event => {
     rule.enabled = event.target.checked;
-    div.classList.toggle('disabled', !rule.enabled);
+    card.classList.toggle('disabled', !rule.enabled);
     scheduleSave();
   });
   delBtn.addEventListener('click', () => {
@@ -314,12 +401,12 @@ function renderRule(rule) {
       scheduleSave();
     });
   });
-  return div;
+  return card;
 }
 
 function showSaveError(message) {
   $save.textContent = message || 'Unable to save.';
-  $save.style.color = '#f66';
+  $save.className = 'save-status error';
 }
 
 let undoTimer = null;
@@ -327,9 +414,9 @@ function showUndoToast(domain, onUndo) {
   document.querySelector('.tabcloser-toast')?.remove();
   clearTimeout(undoTimer);
   const label = domain && domain.trim() ? domain : 'Site';
-  const toast = el('div', { class: 'tabcloser-toast' }, [
+  const toast = el('div', { class: 'tabcloser-toast', role: 'status' }, [
     el('span', null, label + ' removed'),
-    el('button', { type: 'button' }, 'Undo'),
+    el('button', { type: 'button', class: 'btn btn-green btn-sm' }, 'Undo'),
   ]);
   toast.querySelector('button').addEventListener('click', () => {
     clearTimeout(undoTimer);
@@ -342,8 +429,8 @@ function showUndoToast(domain, onUndo) {
 
 function scheduleSave() {
   if (saveT) clearTimeout(saveT);
-  $save.textContent = 'Saving...';
-  $save.style.color = '#aaa';
+  $save.textContent = 'Saving…';
+  $save.className = 'save-status';
   saveT = setTimeout(save, 400);
 }
 
@@ -361,60 +448,347 @@ async function save() {
     // can be corrected without losing other unsaved edits.
     return false;
   }
-  $save.textContent = 'Saved.';
-  $save.style.color = '#4caf50';
-  setTimeout(() => { if ($save.textContent === 'Saved.') $save.textContent = ''; }, 1500);
+  $save.textContent = 'All changes saved';
+  $save.className = 'save-status saved';
   return true;
 }
 
-function renderXProtection() {
-  renderAdultSites();
-  const config = snapshot.xProtection || {};
-  const labeled = config.labeled || {};
-  const model = config.model || {};
-  const labeledLocked = isLocked(labeled.lockUntil);
-  const modelLocked = isLocked(model.lockUntil);
+// === At a glance and section nav ===
+function lockChip(text) {
+  return el('span', { class: 'lock-chip' }, text);
+}
 
-  $xLabeled.checked = labeled.enabled === true;
-  // The label tier cannot be turned off while it, or the classifier tier that
-  // implies it, is enabled and locked.
-  $xLabeled.disabled = labeledLocked || (model.enabled === true && modelLocked);
-  for (const control of [$xLabeledLockAmount, $xLabeledLockUnit, $xLabeledLockButton, $xLabeledLockDate, $xLabeledLockDateButton]) {
-    control.disabled = labeledLocked;
-  }
-  $xLabeledStatus.textContent = labeledLocked ? lockText(labeled.lockUntil) : '';
+function glanceCard(href, name, pill, pillClass, value, detail, attention = false) {
+  return el('a', { href }, [
+    el('div', { class: 'g-top' }, [el('span', { class: 'g-name' }, name), el('span', { class: 'pill ' + pillClass }, pill)]),
+    el('div', { class: 'g-value' }, value),
+    el('div', { class: 'g-detail' + (attention ? ' attention' : '') }, detail),
+  ]);
+}
 
-  $xModel.checked = model.enabled === true;
-  $xModel.disabled = modelLocked;
-  for (const control of [$xModelLockAmount, $xModelLockUnit, $xModelLockButton, $xModelLockDate, $xModelLockDateButton]) {
-    control.disabled = modelLocked;
-  }
-  $xModelStatus.textContent = modelLocked ? lockText(model.lockUntil) : '';
+function sectionLocks() {
+  const x = snapshot.xProtection || {};
+  const timerLocks = (snapshot.rules || []).filter(rule => rule.enabled && isLocked(rule.disableLockedUntil));
+  const xLocks = [x.labeled?.enabled && x.labeled.lockUntil, x.model?.enabled && x.model.lockUntil, x.revealLockUntil].filter(isLocked);
+  return {
+    timers: timerLocks.length,
+    adult: snapshot.adultSites?.enabled && isLocked(snapshot.adultSites.lockUntil) ? 1 : 0,
+    x: xLocks.length,
+  };
+}
 
-  $xReplaceText.checked = config.replaceText === true;
-  $xBlockLike.checked = config.blockLike === true;
-  if (!revealDraft) $xReveal.value = config.revealDailySec || 0;
-  const controls = snapshot.xUserControls || { posts: [], media: [], dailyMs: 0 };
-  const revealLocked = isLocked(config.revealLockUntil);
-  $xReveal.max = labeledLocked || modelLocked || revealLocked ? config.revealDailySec || 0 : 3600;
-  $xRevealStatus.textContent = config.revealDailySec > 0
-    ? (controls.dailyMs > 0 ? (Math.ceil(controls.dailyMs / 100) / 10).toFixed(1) + 's remaining today.' : 'Daily allowance used up. Resets at local midnight.')
-    : 'Temporary reveals are off.';
-  document.getElementById('xRevealLockStatus').textContent = revealLocked
-    ? lockText(config.revealLockUntil) + ' The allowance may only decrease.'
-    : labeledLocked || modelLocked ? 'X protection is locked: the allowance may only decrease.' : '';
-  for (const suffix of ['Amount', 'Unit', 'Button', 'Date', 'DateButton']) document.getElementById('xRevealLock' + suffix).disabled = revealLocked;
-  renderManualHides(controls);
+function renderGlance() {
+  const now = Date.now();
+  const rules = (snapshot.rules || []).filter(rule => rule.enabled);
+  const domains = [...new Set(rules.map(rule => normalizeRuleDomain(rule.domain)))];
+  const blocked = domains.filter(domain => activeBlockForHost(snapshot.blocks || {}, domain, now)).length;
+  const locks = sectionLocks();
+  const adult = snapshot.adultSites || {};
+  const x = snapshot.xProtection || {};
+  const level = x.model?.enabled ? 'classifier' : x.labeled?.enabled ? 'labels' : 'off';
+  const xLockUntil = level === 'classifier' && isLocked(x.model?.lockUntil) ? x.model.lockUntil
+    : level !== 'off' && isLocked(x.labeled?.lockUntil) ? x.labeled.lockUntil : null;
+  const sensitivity = sensitivityRank[x.model?.sensitivity] != null ? x.model.sensitivity : 'balanced';
+  const reveal = x.revealDailySec || 0;
+  const cards = [
+    ['#site-timers', 'Site timers', domains.length ? 'On' : 'Off', domains.length ? 'pill-on' : '',
+      domains.length ? domains.length + (domains.length === 1 ? ' site' : ' sites') : 'No sites',
+      [blocked ? blocked + ' blocked' : domains.length ? 'Counting active time' : 'Add a site to start', locks.timers ? lockChip(locks.timers + ' locked') : null]],
+    ['#adult-sites', 'Adult websites', adult.enabled ? adult.error ? 'Attention' : 'On' : 'Off',
+      adult.enabled ? adult.error ? 'pill-attention' : 'pill-on' : '',
+      adult.enabled ? Number(adult.listCount || 0).toLocaleString() + ' domains' : 'Not blocking',
+      adult.enabled && adult.error ? ['List unavailable · navigation held'] : [adult.safeSearch && adult.enabled ? 'SafeSearch on' : null,
+        locks.adult ? lockChip('Locked until ' + formatShortDate(adult.lockUntil)) : adult.enabled ? 'Not locked' : null],
+      adult.enabled && !!adult.error],
+    ['#x-protection', 'X protection', level === 'off' ? 'Off' : 'On', level === 'off' ? '' : 'pill-on', levelLabels[level],
+      [level === 'classifier' ? sensitivity[0].toUpperCase() + sensitivity.slice(1) : level === 'labels' ? 'No on-device checks' : 'Media shows as X shows it',
+        xLockUntil ? lockChip('Locked until ' + formatShortDate(xLockUntil)) : null]],
+    ['#x-reveals', 'Temporary reveals', reveal > 0 ? 'On' : 'Off', '', reveal > 0 ? reveal + ' s per day' : 'Reveals off',
+      [isLocked(x.revealLockUntil) ? lockChip('Locked until ' + formatShortDate(x.revealLockUntil)) : 'Not locked']],
+  ];
+  renderOnce($glance, JSON.stringify(cards.map(card => card.map(part => Array.isArray(part)
+    ? part.map(item => item?.textContent ?? item) : part))), () => cards.map(card => glanceCard(...card)));
 
-  const sensitivity = sensitivityRank[model.sensitivity] != null ? model.sensitivity : 'balanced';
-  for (const radio of $xSensitivityRadios) {
-    radio.checked = radio.value === sensitivity;
-    // While locked, only tightening is allowed; also inert when the tier is off.
-    radio.disabled = model.enabled !== true ||
-      (modelLocked && sensitivityRank[radio.value] < sensitivityRank[sensitivity]);
+  for (const link of document.querySelectorAll('.side-nav a[data-section]')) {
+    const count = locks[link.dataset.section];
+    const label = link.dataset.label || (link.dataset.label = link.textContent.trim());
+    renderOnce(link, label + ':' + count, () => [label, count ? lockChip('Locked') : null]);
   }
 }
 
+// Mark the section nearest the top of the viewport as current.
+if ('IntersectionObserver' in window) {
+  const links = [...document.querySelectorAll('.side-nav a[href^="#"]')];
+  const byId = new Map(links.map(link => [link.getAttribute('href').slice(1), link]));
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      for (const link of links) link.removeAttribute('aria-current');
+      byId.get(entry.target.id)?.setAttribute('aria-current', 'true');
+    }
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  for (const id of byId.keys()) {
+    const section = document.getElementById(id);
+    if (section) observer.observe(section);
+  }
+}
+
+// === Adult websites ===
+function renderAdultSites() {
+  const config = snapshot.adultSites || {};
+  const locked = isLocked(config.lockUntil);
+  $adultEnabled.checked = config.enabled === true;
+  $adultEnabled.disabled = locked;
+  $adultSafeSearch.checked = config.safeSearch === true;
+  // SafeSearch shares the adult lock: it can be added during a lock, never removed.
+  $adultSafeSearch.disabled = config.enabled !== true || (locked && config.safeSearch === true);
+  const pill = document.getElementById('adultPill');
+  pill.textContent = config.enabled ? config.error ? 'Attention' : 'On' : 'Off';
+  pill.className = 'pill ' + (config.enabled ? config.error ? 'pill-attention' : 'pill-on' : '');
+  const status = document.getElementById('adultListStatus');
+  status.textContent = config.error || (config.enabled
+    ? Number(config.listCount || 0).toLocaleString() + ' domains · list bundled ' + new Date(config.listUpdatedAt).toLocaleDateString()
+    : 'Off. Turn on to use the bundled list.');
+  status.className = 'status-line' + (config.error ? ' warn' : '');
+  renderOnce(document.getElementById('adultLock'), lockKey(config.lockUntil) + ':' + !!config.enabled + ':' + !!config.safeSearch, () => {
+    if (locked) {
+      return lockBanner(config.lockUntil, 'Can’t be switched off until then' + (config.safeSearch ? ', and neither can SafeSearch' : '') +
+        '. After the lock ends, it stays on until you turn it off.');
+    }
+    if (!config.enabled) return null;
+    return [
+      el('p', { class: 'help' }, 'Lock it to keep blocking on for a while. A lock can’t be shortened.'),
+      lockControl({
+        title: 'Lock adult-site blocking',
+        scope: 'Block known adult websites' + (config.safeSearch ? ' · SafeSearch' : ''),
+        help: 'Until the lock ends, blocking' + (config.safeSearch ? ' and SafeSearch' : '') + ' can’t be switched off. A lock can’t be shortened.',
+        async onLock(durationSec) {
+          const response = await changeAdultSites({ type: 'lockAdultSites', durationSec });
+          return response?.ok ? null : response?.error || 'Unable to lock.';
+        },
+      }),
+    ];
+  });
+}
+
+async function changeAdultSites(message) {
+  const response = await browser.runtime.sendMessage(message);
+  feedback('adultFeedback', response?.ok ? 'Saved.' : response?.error || 'Unable to save.', !response?.ok);
+  await refreshSnapshot();
+  renderSettings();
+  return response;
+}
+
+$adultEnabled.addEventListener('change', event => changeAdultSites({ type: 'saveAdultSites', enabled: event.target.checked }));
+$adultSafeSearch.addEventListener('change', event => changeAdultSites({ type: 'saveAdultSites', enabled: $adultEnabled.checked, safeSearch: event.target.checked }));
+
+// === X protection ===
+function xLocks() {
+  const config = snapshot.xProtection || {};
+  return {
+    labeled: config.labeled?.enabled === true && isLocked(config.labeled.lockUntil),
+    model: config.model?.enabled === true && isLocked(config.model.lockUntil),
+  };
+}
+
+function renderXProtection() {
+  const config = snapshot.xProtection || {};
+  const labeled = config.labeled || {};
+  const model = config.model || {};
+  const locks = xLocks();
+  const level = model.enabled ? 'classifier' : labeled.enabled ? 'labels' : 'off';
+  for (const radio of $xLevelRadios) {
+    radio.checked = radio.value === level;
+    // Locks only allow stepping up: a locked label tier cannot go Off, and a
+    // locked classifier keeps the level at "Labels + classifier".
+    radio.disabled = (radio.value === 'off' && (locks.labeled || locks.model)) ||
+      (radio.value === 'labels' && locks.model);
+  }
+  const sensitivity = sensitivityRank[model.sensitivity] != null ? model.sensitivity : 'balanced';
+  for (const radio of $xSensitivityRadios) {
+    radio.checked = radio.value === sensitivity;
+    radio.disabled = model.enabled !== true || (locks.model && sensitivityRank[radio.value] < sensitivityRank[sensitivity]);
+  }
+  renderLevelLock(config, level, sensitivity, locks);
+
+  $xSacredArt.checked = config.sacredArt === true;
+  $xReplaceText.checked = config.replaceText === true;
+  $xBlockLike.checked = config.blockLike === true;
+  renderReveals(config, locks);
+  renderProfile(config, locks);
+  renderManualHides(snapshot.xUserControls || { posts: [], media: [] });
+}
+
+function renderLevelLock(config, level, sensitivity, locks) {
+  const labelsUntil = config.labeled?.lockUntil;
+  const modelUntil = config.model?.lockUntil;
+  const key = [level, sensitivity, locks.model ? lockKey(modelUntil) : '', locks.labeled ? lockKey(labelsUntil) : ''].join('|');
+  renderOnce(document.getElementById('xLevelLock'), key, () => {
+    const parts = [];
+    if (locks.model) {
+      parts.push(lockBanner(modelUntil, 'You can still raise the sensitivity, but not lower it or switch the level down.' +
+        (labelsUntil > modelUntil ? ' After that, X labels stay locked until ' + formatLockDate(labelsUntil) + '.' : ''),
+      'Locked at “Labels + classifier” until ' + formatLockDate(modelUntil)));
+    } else if (locks.labeled) {
+      parts.push(lockBanner(labelsUntil, 'The level can’t be switched Off until then. Adding the classifier is still allowed.',
+        'Locked at “X labels” or stronger until ' + formatLockDate(labelsUntil)));
+    }
+    const target = level === 'classifier' ? 'model' : level === 'labels' ? 'labeled' : null;
+    if (target && !locks[target]) {
+      if (!parts.length) parts.push(el('p', { class: 'help' }, 'Lock the level to keep it from being lowered for a while.'));
+      parts.push(lockControl({
+        label: 'Lock level…',
+        title: 'Lock X protection',
+        scope: level === 'classifier' ? 'Labels + classifier · ' + sensitivity[0].toUpperCase() + sensitivity.slice(1) : 'X labels only',
+        help: 'Until the lock ends, the level can only go up' + (level === 'classifier' ? ' and the sensitivity can only be raised' : '') +
+          '. Manual hides can’t be removed and the reveal allowance can’t grow. A lock can’t be shortened.',
+        async onLock(durationSec) {
+          const response = await browser.runtime.sendMessage({ type: 'lockXProtection', target, durationSec });
+          await refreshSnapshot();
+          renderSettings();
+          return response?.ok ? null : response?.error || 'Unable to lock.';
+        },
+      }));
+    }
+    return parts;
+  });
+}
+
+async function saveXProtection(change) {
+  const response = await browser.runtime.sendMessage({ type: 'saveXProtection', ...change });
+  if (!response?.ok) showSaveError(response?.error);
+  await refreshSnapshot();
+  renderSettings();
+  return response;
+}
+
+for (const radio of $xLevelRadios) {
+  radio.addEventListener('change', () => {
+    if (!radio.checked) return;
+    saveXProtection({ labeled: radio.value !== 'off', model: radio.value === 'classifier' });
+  });
+}
+for (const radio of $xSensitivityRadios) {
+  radio.addEventListener('change', () => { if (radio.checked) saveXProtection({ sensitivity: radio.value }); });
+}
+$xSacredArt.addEventListener('change', () => saveXProtection({ sacredArt: $xSacredArt.checked }));
+$xReplaceText.addEventListener('change', () => saveXProtection({ replaceText: $xReplaceText.checked }));
+$xBlockLike.addEventListener('change', () => saveXProtection({ blockLike: $xBlockLike.checked }));
+
+// === Temporary reveals ===
+function renderReveals(config, locks) {
+  const controls = snapshot.xUserControls || { dailyMs: 0 };
+  const revealLocked = isLocked(config.revealLockUntil);
+  const xLocked = locks.labeled || locks.model;
+  if (!revealDraft) $xReveal.value = config.revealDailySec || 0;
+  $xReveal.max = xLocked || revealLocked ? config.revealDailySec || 0 : 3600;
+  const dailyMs = controls.dailyMs || 0;
+  $xRevealStatus.textContent = config.revealDailySec > 0
+    ? (dailyMs > 0 ? (Math.ceil(dailyMs / 100) / 10).toFixed(1) + ' s left today · resets at local midnight' : 'Daily allowance used up. Resets at local midnight.')
+    : 'Temporary reveals are off.';
+  $xRevealStatus.className = 'status-line reveal-status' + (config.revealDailySec > 0 && dailyMs > 0 ? ' ok' : '');
+  renderOnce(document.getElementById('xRevealLock'), lockKey(config.revealLockUntil) + ':' + xLocked + ':' + (config.revealDailySec || 0), () => {
+    if (revealLocked) return lockBanner(config.revealLockUntil, 'The allowance can only go down until then.', 'Allowance locked until ' + formatLockDate(config.revealLockUntil));
+    const seconds = config.revealDailySec || 0;
+    return [
+      el('p', { class: 'help' }, xLocked
+        ? 'X protection is locked, so the allowance can only go down. Lock it separately to keep that after X protection unlocks.'
+        : 'Locking stops the allowance from being raised until the lock ends; it can still be lowered. An X protection lock has the same effect.'),
+      lockControl({
+        label: 'Lock allowance…',
+        title: 'Lock the reveal allowance',
+        scope: seconds > 0 ? seconds + ' seconds per day' : 'Reveals off (0 seconds)',
+        help: 'Until the lock ends, the allowance can only go down. Locking 0 keeps reveals off. A lock can’t be shortened.',
+        async onLock(durationSec) {
+          if (!await saveRevealAllowance()) return document.getElementById('xRevealFeedback').textContent;
+          const result = await browser.runtime.sendMessage({ type: 'lockXReveal', durationSec });
+          if (result?.ok) feedback('xRevealFeedback', 'Allowance locked.');
+          await refreshSnapshot();
+          renderSettings();
+          return result?.ok ? null : result?.error || 'Unable to lock.';
+        },
+      }),
+    ];
+  });
+}
+
+$xReveal.addEventListener('input', () => { revealDraft = true; });
+async function saveRevealAllowance() {
+  if (!$xReveal.value.trim() || !$xReveal.checkValidity()) {
+    feedback('xRevealFeedback', 'Choose a whole number from 0 to ' + $xReveal.max + '.', true);
+    return false;
+  }
+  const result = await browser.runtime.sendMessage({ type: 'saveXProtection', revealDailySec: Number($xReveal.value) });
+  if (!result?.ok) {
+    feedback('xRevealFeedback', result?.error || 'Unable to save.', true);
+    return false;
+  }
+  revealDraft = false;
+  feedback('xRevealFeedback', 'Reveal allowance saved.');
+  await refreshSnapshot();
+  renderSettings();
+  return true;
+}
+document.getElementById('saveXReveal').addEventListener('click', saveRevealAllowance);
+
+// === Profile protection ===
+function profileConfig(config) {
+  const profile = config.profile || {};
+  return {
+    images: imageScopeRank[profile.images] != null ? profile.images : 'off',
+    avatars: profile.avatars !== false,
+    banners: profile.banners !== false,
+    markers: profile.markers === true,
+    names: profile.names === true,
+    alias: profile.alias === 'plain' ? 'plain' : 'virtue',
+    collapse: profile.collapse === true,
+  };
+}
+
+function renderProfile(config, locks) {
+  const profile = profileConfig(config);
+  const locked = locks.labeled || locks.model;
+  // While X protection is locked, profile protection can only get stricter.
+  const pinned = value => locked && value;
+  $profile.markers.checked = profile.markers;
+  $profile.markers.disabled = pinned(profile.markers);
+  for (const radio of $profile.images) {
+    radio.checked = radio.value === profile.images;
+    radio.disabled = locked && imageScopeRank[radio.value] < imageScopeRank[profile.images];
+  }
+  for (const key of ['avatars', 'banners']) {
+    $profile[key].checked = profile[key];
+    $profile[key].disabled = profile.images === 'off' || pinned(profile[key]);
+  }
+  $profile.names.checked = profile.names;
+  $profile.names.disabled = pinned(profile.names);
+  for (const radio of $profile.alias) {
+    radio.checked = radio.value === profile.alias;
+    radio.disabled = !profile.names;
+  }
+  $profile.collapse.checked = profile.collapse;
+  $profile.collapse.disabled = pinned(profile.collapse);
+  const note = document.getElementById('xProfileLockNote');
+  const until = Math.max(locks.labeled ? config.labeled.lockUntil : 0, locks.model ? config.model.lockUntil : 0);
+  note.hidden = !locked;
+  note.textContent = locked ? 'X protection is locked until ' + formatLockDate(until) + ', so profile protection can only get stricter. The alias style can still change.' : '';
+}
+
+async function saveProfile(change) {
+  const response = await browser.runtime.sendMessage({ type: 'saveXProfile', ...change });
+  if (!response?.ok) feedback('xProfileFeedback', response?.error || 'Unable to save.', true);
+  await refreshSnapshot();
+  renderSettings();
+}
+
+$profile.markers.addEventListener('change', () => saveProfile({ markers: $profile.markers.checked }));
+for (const radio of $profile.images) radio.addEventListener('change', () => { if (radio.checked) saveProfile({ images: radio.value }); });
+for (const key of ['avatars', 'banners', 'names', 'collapse']) {
+  $profile[key].addEventListener('change', () => saveProfile({ [key]: $profile[key].checked }));
+}
+for (const radio of $profile.alias) radio.addEventListener('change', () => { if (radio.checked) saveProfile({ alias: radio.value }); });
+
+// === Manual hides ===
 function renderManualHides(controls) {
   const key = JSON.stringify([controls.posts, controls.texts, controls.media, controls.locked]);
   if (key === manualListKey) return;
@@ -423,139 +797,58 @@ function renderManualHides(controls) {
     ...(controls.texts || []).map(key => ({ scope: 'text', key })),
     ...(controls.media || []).map(key => ({ scope: 'media', key }))];
   document.getElementById('xManualSummary').textContent = entries.length + ' saved hide' + (entries.length === 1 ? '' : 's');
-  $xManualHides.replaceChildren();
+  const lockNote = document.getElementById('xManualLockNote');
+  lockNote.hidden = !controls.locked;
+  lockNote.textContent = controls.locked ? 'Removing hides is unavailable while X protection is locked.' : '';
+  $xManualHides.replaceChildren(...(entries.length ? [] : [el('li', { class: 'empty' }, 'No manual hides yet.')]));
   for (const entry of entries) {
     const postId = entry.key.split('|')[0];
-    const row = el('div', { class: 'manual-hide-row' }, [
-      el('a', { href: 'https://x.com/i/status/' + postId, target: '_blank', rel: 'noopener noreferrer' }, (entry.scope === 'post' ? 'Text and media in post ' : entry.scope === 'text' ? 'Text in post ' : 'Media in post ') + postId),
-      el('button', { type: 'button', disabled: controls.locked }, 'Remove'),
+    const remove = el('button', { type: 'button', class: 'btn btn-sm', disabled: controls.locked }, 'Remove');
+    const row = el('li', null, [
+      el('span', null, [
+        el('span', { class: 'kind' }, entry.scope === 'post' ? 'Text and media' : entry.scope === 'text' ? 'Text' : 'Media'),
+        el('a', { href: 'https://x.com/i/status/' + postId, target: '_blank', rel: 'noopener noreferrer' }, 'x.com/i/status/' + postId),
+      ]),
+      remove,
     ]);
     if (entry.scope === 'media') row.title = entry.key.slice(entry.key.indexOf('|') + 1);
-    row.querySelector('button').addEventListener('click', async () => {
+    remove.addEventListener('click', async () => {
       const result = await browser.runtime.sendMessage({ type: 'xControlRemove', ...entry });
       if (!result?.ok) showSaveError(result?.error);
-      await refreshSnapshot(); renderXProtection();
+      await refreshSnapshot();
+      renderSettings();
     });
     $xManualHides.appendChild(row);
   }
 }
 
-$xReveal.addEventListener('input', () => { revealDraft = true; });
-async function saveRevealAllowance() {
-  if (!$xReveal.value.trim() || !$xReveal.checkValidity()) { revealFeedback('Choose a whole number from 0 to ' + $xReveal.max + '.', true); return false; }
-  const result = await browser.runtime.sendMessage({
-    type: 'saveXProtection', labeled: $xLabeled.checked, model: $xModel.checked,
-    revealDailySec: Number($xReveal.value),
-  });
-  if (!result?.ok) { revealFeedback(result?.error || 'Unable to save.', true); return false; }
-  revealDraft = false;
-  revealFeedback('Reveal allowance saved.');
-  await refreshSnapshot(); renderXProtection();
-  return true;
-}
-document.getElementById('saveXReveal').addEventListener('click', saveRevealAllowance);
-for (const [suffix, duration] of [
-  ['Button', () => durationSecFrom(document.getElementById('xRevealLockAmount'), document.getElementById('xRevealLockUnit'))],
-  ['DateButton', () => durationSecUntilDate(document.getElementById('xRevealLockDate'))],
-]) document.getElementById('xRevealLock' + suffix).addEventListener('click', async () => {
-  const durationSec = duration();
-  if (durationSec == null || durationSec < 60) return revealFeedback('Choose at least one minute or a future date.', true);
-  if (!await saveRevealAllowance()) return;
-  const result = await browser.runtime.sendMessage({ type: 'lockXReveal', durationSec });
-  revealFeedback(result?.ok ? 'Allowance locked.' : result?.error || 'Unable to lock.', !result?.ok);
-  await refreshSnapshot(); renderXProtection();
-});
-
-async function saveXProtection(labeledEnabled, modelEnabled, sensitivity) {
-  const message = {
-    type: 'saveXProtection',
-    labeled: labeledEnabled,
-    model: modelEnabled,
-    replaceText: $xReplaceText.checked,
-    blockLike: $xBlockLike.checked,
-  };
-  if (sensitivity) message.sensitivity = sensitivity;
-  const response = await browser.runtime.sendMessage(message);
-  if (!response.ok) showSaveError(response.error);
-  await refreshSnapshot();
+// === Page ===
+function renderSettings() {
+  renderGlance();
+  renderAdultSites();
   renderXProtection();
 }
-
-$xLabeled.addEventListener('change', () => {
-  // Disabling the label tier also disables the classifier tier it carries.
-  const labeledEnabled = $xLabeled.checked;
-  saveXProtection(labeledEnabled, labeledEnabled && $xModel.checked);
-});
-
-$xModel.addEventListener('change', () => {
-  // Enabling the classifier tier switches the label tier on with it.
-  saveXProtection($xLabeled.checked || $xModel.checked, $xModel.checked);
-});
-
-async function lockXProtection(target, durationSec) {
-  if (durationSec == null || durationSec < 60) return showSaveError('Choose a duration of at least one minute (dates must be in the future).');
-  const response = await browser.runtime.sendMessage({ type: 'lockXProtection', target, durationSec });
-  if (!response.ok) showSaveError(response.error);
-  await refreshSnapshot();
-  renderXProtection();
-}
-
-$xLabeledLockButton.addEventListener('click', () => lockXProtection('labeled', durationSecFrom($xLabeledLockAmount, $xLabeledLockUnit)));
-$xLabeledLockDateButton.addEventListener('click', () => lockXProtection('labeled', durationSecUntilDate($xLabeledLockDate)));
-$xModelLockButton.addEventListener('click', () => lockXProtection('model', durationSecFrom($xModelLockAmount, $xModelLockUnit)));
-$xModelLockDateButton.addEventListener('click', () => lockXProtection('model', durationSecUntilDate($xModelLockDate)));
-
-for (const radio of $xSensitivityRadios) {
-  radio.addEventListener('change', () => {
-    if (radio.checked) saveXProtection($xLabeled.checked, $xModel.checked, radio.value);
-  });
-}
-
-$xReplaceText.addEventListener('change', () => saveXProtection($xLabeled.checked, $xModel.checked));
-$xBlockLike.addEventListener('change', () => saveXProtection($xLabeled.checked, $xModel.checked));
 
 $add.addEventListener('click', () => {
   if (!workingRules) workingRules = [];
   workingRules.push(defaultRule());
   render();
+  $rules.querySelector('.rule:last-child .domain-input')?.focus();
 });
+
+// Extensions do not run in private windows unless the user allows it there.
+browser.extension?.isAllowedIncognitoAccess?.()
+  .then(allowed => { document.getElementById('privateWarning').hidden = allowed !== false; })
+  .catch(() => {});
 
 setInterval(async () => {
   if (!workingRules) return;
   await refreshSnapshot();
-  const ruleEls = $rules.querySelectorAll('.rule');
-  ruleEls.forEach((ruleEl, index) => {
+  $rules.querySelectorAll('.rule').forEach((card, index) => {
     const rule = workingRules[index];
-    const statusEl = ruleEl.querySelector('.status');
-    if (rule && statusEl) setStatus(statusEl, rule);
+    if (rule) setStatus(card, rule);
   });
-  renderXProtection();
+  renderSettings();
 }, 1000);
 
 initialLoad();
-
-function renderAdultSites() {
-  const config = snapshot.adultSites || {};
-  const locked = isLocked(config.lockUntil);
-  const toggle = document.getElementById('adultSitesEnabled');
-  toggle.checked = config.enabled === true;
-  toggle.disabled = locked;
-  for (const suffix of ['Amount', 'Unit', 'Button', 'Date', 'DateButton']) document.getElementById('adultLock' + suffix).disabled = locked || !config.enabled;
-  document.getElementById('adultLockStatus').textContent = locked ? lockText(config.lockUntil) : '';
-  document.getElementById('adultListStatus').textContent = config.error || (config.enabled
-    ? Number(config.listCount || 0).toLocaleString() + ' domains · list bundled ' + new Date(config.listUpdatedAt).toLocaleDateString()
-    : 'Off. Enable to use the bundled list.');
-}
-let adultFeedbackTimer;
-async function changeAdultSites(message) {
-  const response = await browser.runtime.sendMessage(message);
-  const feedback = document.getElementById('adultFeedback');
-  clearTimeout(adultFeedbackTimer);
-  feedback.textContent = response?.ok ? 'Saved.' : response?.error || 'Unable to save.';
-  feedback.classList.toggle('feedback-error', !response?.ok);
-  if (response?.ok) adultFeedbackTimer = setTimeout(() => { feedback.textContent = ''; }, 3000);
-  await refreshSnapshot(); renderAdultSites();
-}
-document.getElementById('adultSitesEnabled').addEventListener('change', event => changeAdultSites({ type: 'saveAdultSites', enabled: event.target.checked }));
-document.getElementById('adultLockButton').addEventListener('click', () => changeAdultSites({ type: 'lockAdultSites', durationSec: durationSecFrom(document.getElementById('adultLockAmount'), document.getElementById('adultLockUnit')) }));
-document.getElementById('adultLockDateButton').addEventListener('click', () => changeAdultSites({ type: 'lockAdultSites', durationSec: durationSecUntilDate(document.getElementById('adultLockDate')) }));

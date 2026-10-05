@@ -105,6 +105,22 @@ test('background restores X protection in already-open tabs after an extension r
     'existing-tab restoration must run after protection settings load');
 });
 
+test('blur is the default cover, scales with the cell, and keeps a fixed-radius fallback', () => {
+  const background = readFileSync(path.join(root, 'background.js'), 'utf8');
+  assert.match(background, /sacredArt: raw\.sacredArt === true/, 'sacred art is opt-in');
+  assert.match(coordinator, /tabcloser-media-overlay-blur/);
+  for (const state of ['pending', 'protected']) {
+    const selector = '[data-tabcloser-media-state="' + state + '"] > :not(.tabcloser-media-overlay) {';
+    const from = stylesheet.indexOf(selector);
+    const rule = from < 0 ? '' : stylesheet.slice(from, stylesheet.indexOf('}', from));
+    const filters = rule.match(/filter:[^;]*/g) || [];
+    assert.equal(filters.length, 2, state + ' needs a fixed fallback followed by the scaled blur');
+    assert.match(filters[0], /blur\(\d+px\)/, state + ' fallback must be a plain radius');
+    assert.match(filters[1], /blur\(max\(\d+px, calc\(var\(--tabcloser-media-side/, state + ' blur must scale with the cell');
+  }
+  assert.match(stylesheet, /\.tabcloser-media-overlay-blur \{[^}]*cursor: pointer/);
+});
+
 test('pending and protected media show blurred previews while staying unplayable and unclickable', () => {
   // Blur targets the root's children (not bare img/video selectors) because X
   // renders photos as background-image divs the img selector misses.
@@ -115,15 +131,15 @@ test('pending and protected media show blurred previews while staying unplayable
   assert.match(coordinator, /tabcloser-media-overlay-pending/);
 });
 
-test('protected media is covered by a deterministic sacred-art painting with a corner notice', () => {
+test('with sacred art on, protected media is covered by a deterministic painting with a corner notice', () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf8'));
   assert.ok(manifest.web_accessible_resources.some(entry => entry.resources.includes('assets/sacred-art/*')),
     'paintings must be web-accessible on X pages');
   assert.ok(manifest.content_scripts[0].js.includes('sacred-art-list.js'), 'the generated art list must load before the coordinator');
   assert.match(coordinator, /hashString\(sacredArtKeyFor\(root\)\)/, 'artwork choice must use a stable post/media identity');
   assert.match(coordinator, /sacredArtByRoot\.get\(root\)/, 'a mounted media root must retain its painting through source churn');
-  assert.match(coordinator, /state === 'protected' && mature \? sacredArtUrlFor\(root\) : null/,
-    'only confirmed mature verdicts may show a painting');
+  assert.match(coordinator, /state === 'protected' && mature && settings\.sacredArt \? sacredArtUrlFor\(root\) : null/,
+    'only confirmed mature verdicts may show a painting, and only when sacred art is on');
   assert.match(coordinator, /willRetry = state === 'protected' && !mature && retryableReason\.test/,
     'failure verdicts awaiting retry must render like the pending state');
   assert.doesNotMatch(stylesheet, /\.tabcloser-media-overlay-art \{[^}]*background-size/,

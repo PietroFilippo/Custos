@@ -63,3 +63,32 @@ function formatDuration(totalSec) {
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+
+// Lock copy shared by settings, the popup, and the block page.
+function formatLockDate(until) {
+  return new Date(until).toLocaleString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function formatShortDate(until) {
+  return new Date(until).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+// "4 d 11 h", "3 h 5 min", "12 min"; never rounds a live lock down to zero.
+function formatTimeLeft(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  if (minutes < 60) return minutes + ' min';
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + ' h' + (minutes % 60 ? ' ' + (minutes % 60) + ' min' : '');
+  const days = Math.floor(hours / 24);
+  return days + ' d' + (hours % 24 ? ' ' + (hours % 24) + ' h' : '');
+}
+
+// Single unit for compact chips: "6 d", "4 h", "12 min".
+function formatTimeLeftShort(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  if (minutes < 60) return minutes + ' min';
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? hours + ' h' : Math.floor(hours / 24) + ' d';
+}
