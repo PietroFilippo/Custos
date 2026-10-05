@@ -15,6 +15,7 @@ const rule = (domain, extra = {}) => ({
 async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs: initialTabs,
   url = 'https://x.com/home', xProtection = {}, xUserControls = {}, adultSites = {}, adultListFails = false } = {}) {
   let now = 100000;
+  let mono = 0;
   let activeId = 1;
   let focused = true;
   let timerId = 0;
@@ -25,6 +26,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
   const context = vm.createContext({
     console, URL, TextDecoder, Uint8ClampedArray, ArrayBuffer,
     Date: class extends Date { static now() { return now; } },
+    performance: { now: () => mono },
     setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, due: now + ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
     TabCloserXMediaUtils: require('../x-media-utils.js'),
@@ -67,6 +69,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
       },
       webRequest: {
         onBeforeRequest: event('request'),
+        onHeadersReceived: event('headers'),
         filterResponseData(requestId) {
           const filter = { requestId, written: [], write(data) { this.written.push(data); }, close() {} };
           filters.push(filter);
@@ -83,7 +86,9 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
   return {
     events, timers, alarms, removed, updates, send, state, tabMessages, filters,
     saved: () => saved,
-    advance(seconds) { now += seconds * 1000; },
+    advance(seconds) { now += seconds * 1000; mono += seconds * 1000; },
+    // Moves only the device clock, as a user changing the system time would.
+    jumpClock(seconds) { now += seconds * 1000; },
     async activate(id) { activeId = id; await events.activated({ tabId: id }); await state(); },
     async focus(value) { focused = value; await events.windowFocus(value ? 1 : -1); await state(); },
     async tick() {
@@ -385,4 +390,82 @@ test('time per post is 3-10 s, reaches the ledger, and may only go down while lo
   const xLocked = await start({ xProtection: { revealDailySec: 30, revealPerPostSec: 6, labeled: { enabled: true, lockUntil: 900000 } } });
   assert.equal((await xLocked.state()).xProtection.revealPerPostSec, 6, 'a saved value survives restart');
   assert.equal((await xLocked.send({ type: 'saveXProtection', revealPerPostSec: 7 }, settingsSender)).ok, false, 'no increase under an X lock');
+});
+
+const xSender = { tab: { id: 1, url: 'https://x.com/home' } };
+
+test('enum values from Object.prototype never pass validation or lock checks', async () => {
+  const locked = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 }, model: { enabled: true, sensitivity: 'strict', lockUntil: 900000 },
+    profile: { images: 'flagged', avatars: true } } });
+  for (const images of ['constructor', '__proto__', 'toString']) {
+    assert.equal((await locked.send({ type: 'saveXProfile', images }, settingsSender)).ok, false, images);
+  }
+  for (const sensitivity of ['__proto__', 'constructor', 'hasOwnProperty']) {
+    assert.equal((await locked.send({ type: 'saveXProtection', sensitivity }, settingsSender)).ok, false, sensitivity);
+  }
+  const state = (await locked.state()).xProtection;
+  assert.equal(state.profile.images, 'flagged');
+  assert.equal(state.model.sensitivity, 'strict');
+  const stored = await start({ xProtection: { model: { enabled: true, sensitivity: '__proto__' }, profile: { images: 'constructor' } } });
+  assert.equal((await stored.state()).xProtection.model.sensitivity, 'balanced', 'tampered storage normalizes safely');
+  assert.equal((await stored.state()).xProtection.profile.images, 'off');
+  const verdict = require('../x-verdict.js');
+  assert.equal(verdict.presetValues('__proto__'), verdict.presetValues('balanced'));
+});
+
+test('overflowing lock durations are rejected and never erase an existing lock', async () => {
+  const h = await start({ rules: [rule('x.com', { disableLockedUntil: 900000 })], xProtection: { labeled: { enabled: true, lockUntil: 900000 } } });
+  for (const durationSec of [1e308, Infinity, 'forever', 30]) {
+    assert.equal((await h.send({ type: 'lockRule', id: 'x.com', durationSec })).ok, false, String(durationSec));
+    assert.equal((await h.send({ type: 'lockXProtection', target: 'labeled', durationSec })).ok, false, String(durationSec));
+    assert.equal((await h.send({ type: 'lockXReveal', durationSec }, settingsSender)).ok, false, String(durationSec));
+  }
+  const state = await h.state();
+  assert.equal(state.rules[0].disableLockedUntil, 900000);
+  assert.equal(state.xProtection.labeled.lockUntil, 900000);
+  assert.equal((await h.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, false, 'the X lock still holds');
+});
+
+test('a locked timer cannot be reset, and a locked rule may only get stricter', async () => {
+  const h = await start({ rules: [rule('x.com', { closeAfterSec: 600, blockDurationSec: 1800, disableLockedUntil: 900000 })] });
+  assert.equal((await h.send({ type: 'resetAccum', domain: 'x.com' })).ok, false);
+  const base = (await h.state()).rules[0];
+  const save = change => h.send({ type: 'saveRules', rules: [{ ...base, ...change }] });
+  assert.equal((await save({ closeAfterSec: 900 })).ok, false, 'a longer limit is looser');
+  assert.equal((await save({ blockDurationSec: 600 })).ok, false, 'a shorter block is looser');
+  assert.equal((await save({ blockAfterClose: false })).ok, false, 'removing the block is looser');
+  assert.equal((await save({ enabled: false })).ok, false);
+  assert.equal((await save({ domain: 'y.com' })).ok, false);
+  assert.equal((await save({ closeAfterSec: 300, blockDurationSec: 3600, lockUnblock: true })).ok, true, 'stricter edits are allowed');
+  const saved = (await h.state()).rules[0];
+  assert.equal(saved.closeAfterSec, 300);
+  assert.equal(saved.disableLockedUntil, 900000, 'the lock is kept');
+  assert.equal((await h.send({ type: 'saveRules', rules: [{ ...saved, lockUnblock: false }] })).ok, false, 'early unblock stays locked');
+});
+
+test('a trailing dot in the host cannot escape timers, cooldowns, or protections', async () => {
+  const h = await start({ rules: [rule('x.com')], blocks: { 'x.com': { until: 900000 } }, tabs: [{ id: 1, url: 'https://example.com', windowId: 1 }] });
+  assert.equal((await h.events.adultRequest({ type: 'main_frame', url: 'https://x.com./home' })).redirectUrl, 'https://x.com/home');
+  await h.events.navigate({ frameId: 0, tabId: 1, url: 'https://x.com./home' });
+  await h.state();
+  assert.match(h.updates.at(-1)?.url || '', /blocked\.html\?domain=x\.com/);
+});
+
+test('text replacement and like blocking cannot be switched off under an X lock', async () => {
+  const locked = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 }, replaceText: true, blockLike: true } });
+  assert.equal((await locked.send({ type: 'saveXProtection', replaceText: false }, settingsSender)).ok, false);
+  assert.equal((await locked.send({ type: 'saveXProtection', blockLike: false }, settingsSender)).ok, false);
+  assert.equal((await locked.send({ type: 'saveXProtection', sacredArt: true }, settingsSender)).ok, true, 'presentation stays free');
+  const open = await start({ xProtection: { labeled: { enabled: true }, replaceText: true } });
+  assert.equal((await open.send({ type: 'saveXProtection', replaceText: false }, settingsSender)).ok, true);
+});
+
+test('moving the system clock forward does not end locks once a server time is known', async () => {
+  const h = await start({ xProtection: { labeled: { enabled: true }, model: { enabled: true } } });
+  assert.equal((await h.send({ type: 'lockXProtection', target: 'model', durationSec: 120 })).ok, true);
+  h.events.headers({ url: 'https://x.com/', fromCache: false, responseHeaders: [{ name: 'Date', value: new Date(100000).toUTCString() }] });
+  h.jumpClock(10 * 86400);
+  assert.equal((await h.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, false, 'the lock holds after a clock jump');
+  h.advance(121);
+  assert.equal((await h.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, true, 'real elapsed time still ends it');
 });

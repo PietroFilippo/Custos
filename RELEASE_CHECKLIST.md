@@ -25,7 +25,8 @@ This script does not evaluate video sampling/aggregation, live X labels or DOM b
 - Check settings section links, keyboard focus, reduced motion, and narrow widths. Check the refreshed block page for a timer countdown, expired cooldown, adult-domain block, and list failure. No page may offer a lock bypass.
 - Open the popup on `blocked.html` and an internal browser page. The blocked domain should appear once with its cooldown; internal pages must never show an extension UUID as a site.
 - Switch between tracked sites/windows, reset an active timer, and let a timer expire. Only focused time should count; stale timeout/alarm notifications must not close a different site early.
-- Test parent/subdomain timer precedence, overlapping cooldowns, duplicate-domain validation, and locked-parent override prevention.
+- Test parent/subdomain timer precedence, overlapping cooldowns, duplicate-domain validation, and locked-parent override prevention. Under a rule lock, confirm only stricter edits save, Reset timer is unavailable, and `https://<site>./` still counts and blocks.
+- With an active lock, move the system clock forward several days after browsing a few sites: locks, cooldowns, and the reveal allowance must hold, and must still end after the real time passes.
 - Test a clean install under the new permanent ID `custos@pietrofilippo`; every new setting starts off and hidden media uses the blur cover. Installing next to an old `tabcloser@personal.local` copy must not share or overwrite its storage; remove the old copy before testing. From here on, keep the Custos ID unchanged so future upgrades preserve rules, locks, and manual hides.
 - In `about:addons`, the toolbar tooltip, the settings, popup, and block page titles, the right-click menu, and X notices must all say Custos.
 - With extension access to private windows denied, confirm the settings banner and popup note appear; with access allowed, confirm both disappear.

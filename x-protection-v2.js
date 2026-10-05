@@ -15,6 +15,10 @@ const sensitiveTweetIds = new Set();
 // Safe verdicts are never stored here; only 'protect' promotes.
 const visuallyProtectedTweetIds = new Set();
 const directVideoSourcesByTweetId = new Map();
+// Per-video sources keyed by the normalized poster the page also renders.
+const directVideoSourcesByPoster = new Map();
+// Pending roots waiting for the IntersectionObserver; swept when X removes them.
+const observedRoots = new Set();
 const directVideoSourceWaitersByTweetId = new Map();
 const directVideoVerdictCache = new Map();
 const directVideoProbeInFlight = new Map();
@@ -408,12 +412,20 @@ function openLightbox(url) {
   closeLightbox();
   lightbox = document.createElement('div');
   lightbox.className = 'tabcloser-lightbox';
+  lightbox.setAttribute('role', 'dialog');
+  lightbox.setAttribute('aria-modal', 'true');
+  lightbox.setAttribute('aria-label', 'Painting shown in place of hidden media');
   const image = document.createElement('img');
   image.src = url;
   image.alt = 'Sacred art shown in place of hidden media';
-  lightbox.appendChild(image);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'tabcloser-lightbox-close';
+  close.textContent = 'Close';
+  lightbox.append(image, close);
   lightbox.addEventListener('click', closeLightbox);
   document.documentElement.appendChild(lightbox);
+  close.focus({ preventScroll: true });
 }
 
 document.addEventListener('keydown', event => {
@@ -465,6 +477,10 @@ function applyQuoteFor(root) {
   if (!article) return;
   const text = [...article.querySelectorAll('[data-testid="tweetText"]')]
     .find(candidate => tweetLayerFor(candidate, article) === layer);
+  // X can redraw the text element alone, leaving the old quote behind.
+  for (const orphan of article.querySelectorAll('.tabcloser-quote')) {
+    if (tweetLayerFor(orphan, article) === layer && !orphan.previousElementSibling?.matches('[data-tabcloser-quoted="yes"]')) orphan.remove();
+  }
   if (!text || text.dataset.tabcloserQuoted === 'yes') return;
   const quote = quoteForKey(statusId || text.textContent.slice(0, 40));
   if (!quote) return;
@@ -758,12 +774,15 @@ function rememberDirectVideoSource(tweetId, source) {
   directVideoSourcesByTweetId.delete(id);
   directVideoSourcesByTweetId.set(id, source);
   trimOldestMapEntries(directVideoSourcesByTweetId);
-  const waiters = directVideoSourceWaitersByTweetId.get(id);
-  if (waiters) {
-    directVideoSourceWaitersByTweetId.delete(id);
-    for (const resolve of waiters) resolve(source);
-  }
+  wakeDirectVideoWaiters(id, source);
   return true;
+}
+
+function wakeDirectVideoWaiters(tweetId, source) {
+  const waiters = directVideoSourceWaitersByTweetId.get(tweetId);
+  if (!waiters) return;
+  directVideoSourceWaitersByTweetId.delete(tweetId);
+  for (const resolve of waiters) resolve(source);
 }
 
 function waitForDirectVideoSource(tweetId, timeoutMs = 1500) {
@@ -787,14 +806,25 @@ function waitForDirectVideoSource(tweetId, timeoutMs = 1500) {
   });
 }
 
+function posterKeyFor(root) {
+  const poster = mediaElementsWithin(root, 'video').map(video => video.poster).find(Boolean) ||
+    mediaElementsWithin(root, 'img[src]').map(image => image.currentSrc || image.src)
+      .find(src => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(src));
+  return poster ? TabCloserXMetadata.normalizeMediaUrl(poster) : null;
+}
+
 async function directVideoSourceForRoot(root, waitForDetail) {
+  const byPoster = directVideoSourcesByPoster.get(posterKeyFor(root));
+  if (byPoster) return byPoster;
   const tweetId = statusIdFor(root);
   if (!tweetId) return null;
   const existing = directVideoSourcesByTweetId.get(tweetId);
   if (existing) return existing;
   const pageTweetId = statusIdFromHref(location.pathname);
   if (!waitForDetail || pageTweetId !== tweetId) return null;
-  return waitForDirectVideoSource(tweetId);
+  const waited = await waitForDirectVideoSource(tweetId);
+  // Multi-video posts only arrive keyed by poster; look again after waking.
+  return directVideoSourcesByPoster.get(posterKeyFor(root)) || waited;
 }
 
 function detachedVideoSampleTimes(duration, fractions) {
@@ -1252,6 +1282,7 @@ const intersectionObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
     if (!entry.isIntersecting || mode !== 'full') continue;
     intersectionObserver.unobserve(entry.target);
+    observedRoots.delete(entry.target);
     const record = rootRecords.get(entry.target);
     if (record?.status === 'pending') queueRootClassification(entry.target, record);
   }
@@ -1306,11 +1337,39 @@ function discoverRoot(root) {
   rootRecords.set(root, { fingerprint, status: 'pending', token, retries });
   setRootState(root, 'pending', 'pending');
   if (metadataProtects(root)) protectGroup(root, 'metadata');
-  else intersectionObserver.observe(root);
+  else {
+    intersectionObserver.observe(root);
+    observedRoots.add(root);
+  }
 }
 
 function discoverWithin(container) {
   for (const root of candidateRootsWithin(container)) discoverRoot(root);
+  // X can redraw a post's text without touching its media: put the quote
+  // back for a layer whose media is already hidden.
+  if (settings.replaceText && container instanceof Element) {
+    const texts = [...container.querySelectorAll('[data-testid="tweetText"]')];
+    const own = container.closest('[data-testid="tweetText"]');
+    if (own) texts.push(own);
+    for (const text of texts) {
+      const article = text.closest('article');
+      if (!article || text.dataset.tabcloserQuoted === 'yes') continue;
+      const layer = tweetLayerFor(text, article);
+      const hidden = [...article.querySelectorAll('[data-tabcloser-media-state="protected"]')].find(root =>
+        tweetLayerFor(root, article) === layer && /^(?:visual|metadata)$/.test(root.dataset.tabcloserMediaReason || ''));
+      if (hidden) applyQuoteFor(hidden);
+    }
+  }
+}
+
+// X virtualizes timelines: pending media removed before it was ever near the
+// viewport must not stay registered with the observer.
+function sweepObservedRoots() {
+  for (const root of observedRoots) {
+    if (root.isConnected) continue;
+    intersectionObserver.unobserve(root);
+    observedRoots.delete(root);
+  }
 }
 
 const discoveryQueue = new Set();
@@ -1333,6 +1392,7 @@ function flushDiscoveryQueue() {
   }
   discoveryQueue.clear();
   for (const container of containers) discoverWithin(container);
+  if (observedRoots.size) sweepObservedRoots();
 }
 
 function queueDiscovery(container) {
@@ -1344,7 +1404,16 @@ function queueDiscovery(container) {
 function scanKnownRootsForMetadata() {
   const roots = new Set();
   const matchedRoots = [];
-  document.querySelectorAll('[data-tabcloser-media-state], ' + mediaSelector).forEach(node => {
+  const nodes = [...document.querySelectorAll('[data-tabcloser-media-state], ' + mediaSelector)];
+  // Media-search tiles carry no media test id; in labels-only mode they are
+  // never marked before a label arrives, so they are looked up directly.
+  if (isMediaSearchPage()) {
+    for (const link of document.querySelectorAll(statusLinkSelector)) {
+      const tile = searchMediaRootFor(link);
+      if (tile) nodes.push(tile);
+    }
+  }
+  nodes.forEach(node => {
     const root = mediaRootFor(node) || node;
     if (roots.has(root)) return;
     roots.add(root);
@@ -1401,6 +1470,7 @@ function setProtection(config) {
   });
   operationId += 1;
   intersectionObserver.disconnect();
+  observedRoots.clear();
   classificationQueue.length = 0;
   discoveryQueue.clear();
   verifiedSafeMediaKeys.clear();
@@ -1439,6 +1509,17 @@ function addSensitiveMetadata(metadata) {
   const directVideoTweetIds = new Set();
   for (const [tweetId, source] of Object.entries(metadata?.videoSourcesByTweetId || {})) {
     if (rememberDirectVideoSource(tweetId, source)) directVideoTweetIds.add(String(tweetId));
+  }
+  for (const [poster, entry] of Object.entries(metadata?.videoSourcesByPoster || {})) {
+    if (!approvedXMediaUrl(entry?.url) || !/^https:\/\//.test(poster)) continue;
+    directVideoSourcesByPoster.delete(poster);
+    directVideoSourcesByPoster.set(poster, entry.url);
+    trimOldestMapEntries(directVideoSourcesByPoster);
+    if (entry.tweetId != null) directVideoTweetIds.add(String(entry.tweetId));
+  }
+  // Wake detail-page waiters once every poster of the batch is known.
+  for (const entry of Object.values(metadata?.videoSourcesByPoster || {})) {
+    if (entry?.tweetId != null) wakeDirectVideoWaiters(String(entry.tweetId), null);
   }
   for (const url of metadata?.urls || []) {
     const normalized = TabCloserXMetadata.normalizeMediaUrl(url);

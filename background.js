@@ -25,6 +25,7 @@ let bootPromise = null;
 let stateQueue = Promise.resolve();
 let closeTimerGeneration = 0;
 let xUserControls;
+let stateLoaded = false;
 let adultList = null, adultListError = null;
 
 // Browser notifications can overlap across awaits. Serialize timer/rule state,
@@ -44,7 +45,13 @@ function finiteOrNull(value) {
 }
 
 async function loadState() {
-  const data = await browser.storage.local.get(['rules', 'accumSec', 'blocks', 'xProtection', 'xUserControls', 'adultSites']);
+  const data = await browser.storage.local.get(['rules', 'accumSec', 'blocks', 'xProtection', 'xUserControls', 'adultSites', 'serverClock']);
+  // A server time seen before a restart, aged by the device clock until a
+  // fresh response arrives.
+  const savedClock = data.serverClock;
+  if (!serverClock && Number.isFinite(savedClock?.server) && Number.isFinite(savedClock?.wall)) {
+    serverClock = { server: savedClock.server, wall: savedClock.wall, mono: null };
+  }
   xUserControls = TabCloserXUserControls.normalize(data.xUserControls);
   state.rules = data.rules ?? [];
   state.accumSec = data.accumSec ?? {};
@@ -66,7 +73,7 @@ async function loadState() {
     model: {
       enabled: raw.model?.enabled === true || legacyEnabled,
       lockUntil: finiteOrNull(raw.model?.lockUntil) ?? legacyLock,
-      sensitivity: SENSITIVITY_RANK[raw.model?.sensitivity] != null ? raw.model.sensitivity : 'balanced',
+      sensitivity: ownKey(SENSITIVITY_RANK, raw.model?.sensitivity) ? raw.model.sensitivity : 'balanced',
     },
     replaceText: raw.replaceText === true,
     blockLike: raw.blockLike === true,
@@ -82,6 +89,9 @@ async function loadState() {
 
 // Higher rank censors more; loosening is refused while the model tier is locked.
 const SENSITIVITY_RANK = { lenient: 0, balanced: 1, strict: 2 };
+// Enum lookups accept own keys only: "constructor" or "__proto__" would
+// otherwise pass validation and compare as NaN, slipping past lock checks.
+const ownKey = (table, key) => typeof key === 'string' && Object.hasOwn(table, key);
 
 // Profile protection works from account flags kept only in the X page's
 // memory. Image scope applies to pictures and banners; names and reply
@@ -90,7 +100,7 @@ const PROFILE_IMAGE_RANK = { off: 0, flagged: 1, everyone: 2 };
 const PROFILE_SWITCHES = ['avatars', 'banners', 'markers', 'names', 'collapse'];
 function normalizeXProfile(raw) {
   return {
-    images: PROFILE_IMAGE_RANK[raw?.images] != null ? raw.images : 'off',
+    images: ownKey(PROFILE_IMAGE_RANK, raw?.images) ? raw.images : 'off',
     avatars: raw?.avatars !== false,
     banners: raw?.banners !== false,
     markers: raw?.markers === true,
@@ -134,8 +144,47 @@ async function persist() {
   });
 }
 
+// === Trusted time ===
+// Locks, cooldowns, and the reveal day must not end early because the system
+// clock was moved forward. Servers' Date headers give an independent clock.
+// Trusted time is never later than the device clock (plus a minute of slack
+// for ordinary skew), so it can only make a lock last longer, never shorter.
+let serverClock = null; // { server, wall, mono }
+const monotonic = () => (typeof performance === 'object' ? performance.now() : null);
+function trustedNow() {
+  const now = Date.now();
+  if (!serverClock) return now;
+  const mono = monotonic();
+  const elapsed = serverClock.mono != null && mono != null ? mono - serverClock.mono : now - serverClock.wall;
+  return Math.min(now, Math.round(serverClock.server + Math.max(0, elapsed) + 60000));
+}
+let serverClockSavedAt = 0;
+function recordServerTime(details) {
+  if (details.fromCache || (serverClock?.mono != null && monotonic() - serverClock.mono < 60000)) return;
+  const header = details.responseHeaders?.find(item => item.name.toLowerCase() === 'date');
+  const server = header ? Date.parse(header.value) : NaN;
+  if (!Number.isFinite(server)) return;
+  serverClock = { server, wall: Date.now(), mono: monotonic() };
+  if (Date.now() - serverClockSavedAt > 600000) {
+    serverClockSavedAt = Date.now();
+    browser.storage.local.set({ serverClock: { server, wall: serverClock.wall } }).catch(() => {});
+  }
+}
+browser.webRequest.onHeadersReceived?.addListener(recordServerTime,
+  { urls: ['https://*/*'], types: ['main_frame', 'sub_frame', 'xmlhttprequest'] }, ['responseHeaders']);
+
 function isLockActive(until) {
-  return Number.isFinite(until) && until > Date.now();
+  return Number.isFinite(until) && until > trustedNow();
+}
+
+// One validator for every lock: whole minutes, never overflowing to a value
+// that isLockActive would treat as "no lock".
+const MAX_LOCK_UNTIL = 8640000000000000;
+function lockDeadline(durationSec) {
+  const seconds = Math.round(Number(durationSec));
+  if (!Number.isFinite(seconds) || seconds < 60) return null;
+  const until = Math.round(trustedNow() + seconds * 1000);
+  return Number.isSafeInteger(until) && until <= MAX_LOCK_UNTIL ? until : null;
 }
 
 async function notifyXProtection() {
@@ -255,6 +304,16 @@ function safeSearchUrl(value, formData) {
 // Firefox holds navigation while the event page loads its bundled list. Do not
 // enqueue this on stateQueue: a pending settings/tabs update may depend on it.
 browser.webRequest.onBeforeRequest.addListener(async details => {
+  // "x.com." is "x.com": load the canonical host so no protection is skipped.
+  if (details.type === 'main_frame') {
+    try {
+      const url = new URL(details.url);
+      if (url.hostname.endsWith('.')) {
+        url.hostname = url.hostname.replace(/\.+$/, '');
+        return { redirectUrl: url.href };
+      }
+    } catch {}
+  }
   if (bootPromise) await bootPromise;
   if (!state.adultSites.enabled) return {};
   const domain = adultSiteDomain(details.url);
@@ -269,7 +328,7 @@ browser.webRequest.onBeforeRequest.addListener(async details => {
 }, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['blocking', 'requestBody']);
 
 function findBlock(host) {
-  return activeBlockForHost(state.blocks, host);
+  return activeBlockForHost(state.blocks, host, trustedNow());
 }
 
 // === Focus / active tab ===
@@ -329,7 +388,7 @@ async function triggerAutoClose(domainKey) {
     return;
   }
   if (rule.blockAfterClose) {
-    state.blocks[domainKey] = { until: Date.now() + rule.blockDurationSec * 1000 };
+    state.blocks[domainKey] = { until: trustedNow() + rule.blockDurationSec * 1000 };
   }
   state.accumSec[domainKey] = 0;
   await persist();
@@ -369,7 +428,7 @@ async function handleFocusChange() {
     }
     const blk = findBlock(host);
     const onExtensionPage = tab.url?.startsWith(browser.runtime.getURL(''));
-    if (blk && Date.now() < blk.block.until && !onExtensionPage) {
+    if (blk && trustedNow() < blk.block.until && !onExtensionPage) {
       const url = browser.runtime.getURL(
         `blocked.html?domain=${encodeURIComponent(blk.key)}&until=${blk.block.until}`
       );
@@ -480,7 +539,9 @@ function observeXGraphqlResponse(details) {
   const focalTweetId = focalTweetIdFromXGraphqlUrl(details.url);
   const debug = /TweetDetail/i.test(operation);
   const profileActive = xProfileActive();
-  if (!state.xProtection.labeled.enabled && !profileActive) {
+  // Before stored settings load, the defaults would say "off": read the
+  // response anyway and decide once settings are known.
+  if (stateLoaded && !state.xProtection.labeled.enabled && !profileActive) {
     if (debug) sendXMetadataDiagnostic(details.tabId, 'intercept-skipped', {
       operation,
       focalTweetId,
@@ -531,16 +592,18 @@ function observeXGraphqlResponse(details) {
     filter.close();
     if (!captureEnabled) return;
     if (bootPromise) await bootPromise;
+    if (!state.xProtection.labeled.enabled && !xProfileActive()) return;
     responseChunks.push(decoder.decode());
     try {
       const payload = JSON.parse(responseChunks.join(''));
       const metadata = TabCloserXMetadata.extractSensitiveMedia(payload);
-      metadata.videoSourcesByTweetId =
-        TabCloserXMetadata.extractDirectVideoSources(payload);
+      const videoSources = TabCloserXMetadata.directVideoSources(payload);
+      metadata.videoSourcesByTweetId = videoSources.byTweet;
+      metadata.videoSourcesByPoster = videoSources.byPoster;
       const extractedTweetIds = [...metadata.tweetIds];
       const regionalTweetIds = TabCloserXMetadata.extractAgeVerificationTweetIds(payload);
       // Account flags go only to this tab's page memory; nothing is stored.
-      metadata.accounts = profileActive ? TabCloserXMetadata.extractAccounts(payload) : [];
+      metadata.accounts = xProfileActive() ? TabCloserXMetadata.extractAccounts(payload) : [];
       if (debug) sendXMetadataDiagnostic(details.tabId, 'intercept-complete', {
         operation,
         focalTweetId,
@@ -553,7 +616,7 @@ function observeXGraphqlResponse(details) {
         signals: TabCloserXMetadata.summarizeSensitivitySignals(payload, focalTweetId),
       });
       if (metadata.urls.length || metadata.tweetIds.length || metadata.accounts.length ||
-          Object.keys(metadata.videoSourcesByTweetId).length) {
+          Object.keys(metadata.videoSourcesByTweetId).length || Object.keys(metadata.videoSourcesByPoster).length) {
         await browser.tabs.sendMessage(details.tabId, { type: 'xSensitiveMediaMetadata', metadata });
       }
     } catch (error) {
@@ -778,7 +841,7 @@ function xControlsLocked() {
 }
 
 function xControlSnapshot(postId) {
-  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, Date.now(),
+  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, trustedNow(),
     state.xProtection.revealPerPostSec * 1000);
   return {
     posts: Object.keys(xUserControls.posts), texts: Object.keys(xUserControls.texts), media: Object.keys(xUserControls.media),
@@ -821,13 +884,13 @@ async function handleXControlMessage(msg, sender) {
     if (!win.focused || active?.id !== sender.tab.id) return { ok: false, error: 'Keep the X tab focused to reveal.' };
     const result = TabCloserXUserControls.begin(xUserControls, {
       postId: msg.postId, tabId: sender.tab.id, limitSec: state.xProtection.revealDailySec,
-      postLimitMs: state.xProtection.revealPerPostSec * 1000, now: Date.now(), token: uuid(),
+      postLimitMs: state.xProtection.revealPerPostSec * 1000, now: trustedNow(), token: uuid(),
     });
     if (result.ok) await browser.storage.local.set({ xUserControls });
     return result.ok ? result : { ...xControlSnapshot(msg.postId), ...result };
   }
   if (msg.type === 'xControlRevealEnd') {
-    if (fromX && TabCloserXUserControls.end(xUserControls, { token: msg.token, tabId: sender.tab.id, now: Date.now() })) {
+    if (fromX && TabCloserXUserControls.end(xUserControls, { token: msg.token, tabId: sender.tab.id, now: trustedNow() })) {
       await browser.storage.local.set({ xUserControls });
     }
     return { ok: true, ...xControlSnapshot(msg.postId) };
@@ -889,9 +952,8 @@ async function handleMessage(msg, sender) {
     }
     case 'lockAdultSites': {
       if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to lock this protection.' };
-      const durationSec = Math.round(Number(msg.durationSec));
-      const until = Date.now() + durationSec * 1000;
-      if (!state.adultSites.enabled || !adultList || !Number.isFinite(durationSec) || durationSec < 60 || !Number.isSafeInteger(until) || until > 8640000000000000) return { ok: false, error: 'Enable adult-site protection and choose at least one minute.' };
+      const until = lockDeadline(msg.durationSec);
+      if (!state.adultSites.enabled || !adultList || until == null) return { ok: false, error: 'Enable adult-site protection and choose at least one minute.' };
       if (isLockActive(state.adultSites.lockUntil) && until <= state.adultSites.lockUntil) return { ok: false, error: 'An adult-site lock cannot be shortened.' };
       state.adultSites.lockUntil = until;
       await persist();
@@ -925,12 +987,14 @@ async function handleMessage(msg, sender) {
       for (const existing of state.rules) {
         if (!isLockActive(existing.disableLockedUntil)) continue;
         const replacement = cleaned.find(rule => rule.id === existing.id);
-        if (!replacement || !replacement.enabled || replacement.domain !== existing.domain ||
-            replacement.closeAfterSec !== existing.closeAfterSec ||
-            replacement.blockAfterClose !== existing.blockAfterClose ||
-            replacement.blockDurationSec !== existing.blockDurationSec ||
-            replacement.lockUnblock !== !!existing.lockUnblock) {
-          return { ok: false, error: 'Rule for ' + existing.domain + ' is locked until ' + new Date(existing.disableLockedUntil).toLocaleString() + '.' };
+        // A locked rule may only get stricter: a shorter limit, a block added
+        // or lengthened, early unblock locked. Its domain stays and it stays on.
+        const stricter = replacement && replacement.enabled && replacement.domain === existing.domain &&
+          replacement.closeAfterSec <= existing.closeAfterSec &&
+          (existing.blockAfterClose ? replacement.blockAfterClose && replacement.blockDurationSec >= existing.blockDurationSec : true) &&
+          (!existing.lockUnblock || replacement.lockUnblock);
+        if (!stricter) {
+          return { ok: false, error: 'Rule for ' + existing.domain + ' is locked until ' + new Date(existing.disableLockedUntil).toLocaleString() + '; it can only get stricter.' };
         }
       }
       for (const candidate of cleaned.filter(rule => rule.enabled)) {
@@ -955,9 +1019,8 @@ async function handleMessage(msg, sender) {
     }
     case 'lockRule': {
       const rule = state.rules.find(item => item.id === msg.id);
-      const durationSec = Math.round(Number(msg.durationSec));
-      if (!rule || !rule.enabled || !Number.isFinite(durationSec) || durationSec < 60) return { ok: false, error: 'Choose an enabled rule and a lock duration of at least one minute.' };
-      const until = Date.now() + durationSec * 1000;
+      const until = lockDeadline(msg.durationSec);
+      if (!rule || !rule.enabled || until == null) return { ok: false, error: 'Choose an enabled rule and a lock duration of at least one minute.' };
       if (isLockActive(rule.disableLockedUntil) && until <= rule.disableLockedUntil) return { ok: false, error: 'A rule lock cannot be shortened.' };
       rule.disableLockedUntil = until;
       await persist();
@@ -993,8 +1056,8 @@ async function handleMessage(msg, sender) {
         return { ok: false, error: 'The classifier tier is locked until ' + new Date(current.model.lockUntil).toLocaleString() + '.' };
       }
       if (typeof msg.sensitivity === 'string') {
+        if (!ownKey(SENSITIVITY_RANK, msg.sensitivity)) return { ok: false, error: 'Unknown sensitivity preset.' };
         const nextRank = SENSITIVITY_RANK[msg.sensitivity];
-        if (nextRank == null) return { ok: false, error: 'Unknown sensitivity preset.' };
         if (nextRank < SENSITIVITY_RANK[current.model.sensitivity] && isLockActive(current.model.lockUntil)) {
           return { ok: false, error: 'Sensitivity cannot be lowered while the classifier tier is locked (until ' + new Date(current.model.lockUntil).toLocaleString() + ').' };
         }
@@ -1004,6 +1067,11 @@ async function handleMessage(msg, sender) {
       current.model.enabled = modelEnabled;
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
       if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
+      // Text replacement and like blocking are protections, not presentation:
+      // under an X lock they can be turned on but not off.
+      if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false))) {
+        return { ok: false, error: 'Text replacement and like blocking cannot be turned off while X protection is locked.' };
+      }
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
       // Presentation only: the painting and the blur hide the same media, so
@@ -1020,7 +1088,7 @@ async function handleMessage(msg, sender) {
       const current = state.xProtection.profile;
       const change = {};
       if (msg.images != null) {
-        if (PROFILE_IMAGE_RANK[msg.images] == null) return { ok: false, error: 'Unknown profile image scope.' };
+        if (!ownKey(PROFILE_IMAGE_RANK, msg.images)) return { ok: false, error: 'Unknown profile image scope.' };
         change.images = msg.images;
       }
       for (const key of PROFILE_SWITCHES) {
@@ -1045,10 +1113,8 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
     case 'lockXReveal': {
-      const durationSec = Math.round(Number(msg.durationSec));
-      if (!Number.isFinite(durationSec) || durationSec < 60) return { ok: false, error: 'Choose at least one minute.' };
-      const until = Date.now() + durationSec * 1000;
-      if (!Number.isSafeInteger(until) || until > 8640000000000000) return { ok: false, error: 'Invalid lock date.' };
+      const until = lockDeadline(msg.durationSec);
+      if (until == null) return { ok: false, error: 'Choose at least one minute.' };
       if (isLockActive(state.xProtection.revealLockUntil) && until <= state.xProtection.revealLockUntil) return { ok: false, error: 'An allowance lock cannot be shortened.' };
       state.xProtection.revealLockUntil = until;
       await persist();
@@ -1058,9 +1124,8 @@ async function handleMessage(msg, sender) {
     case 'lockXProtection': {
       const target = msg.target === 'model' ? 'model' : 'labeled';
       const tier = state.xProtection[target];
-      const durationSec = Math.round(Number(msg.durationSec));
-      if (!tier.enabled || !Number.isFinite(durationSec) || durationSec < 60) return { ok: false, error: 'Enable that protection tier and choose at least one minute.' };
-      const until = Date.now() + durationSec * 1000;
+      const until = lockDeadline(msg.durationSec);
+      if (!tier.enabled || until == null) return { ok: false, error: 'Enable that protection tier and choose at least one minute.' };
       if (isLockActive(tier.lockUntil) && until <= tier.lockUntil) return { ok: false, error: 'A protection lock cannot be shortened.' };
       tier.lockUntil = until;
       // Locking the classifier tier must also pin the labeled tier it implies.
@@ -1099,6 +1164,8 @@ async function handleMessage(msg, sender) {
     }
     case 'resetAccum': {
       const key = normalizeRuleDomain(msg.domain);
+      const lockedRule = state.rules.find(item => normalizeRuleDomain(item.domain) === key && isLockActive(item.disableLockedUntil));
+      if (lockedRule) return { ok: false, error: 'The timer for ' + key + ' is locked until ' + new Date(lockedRule.disableLockedUntil).toLocaleString() + ' and cannot be reset.' };
       state.accumSec[key] = 0;
       if (state.focus.domain === key) {
         state.focus.enteredAt = Date.now();
@@ -1122,6 +1189,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 // === Boot ===
 bootPromise = (async () => {
   await loadState();
+  stateLoaded = true;
   if (state.adultSites.enabled) await loadAdultList();
   if (state.xProtection.model.enabled) TabCloserClassifier.warmUp();
   await ensureExistingXTabsProtected();

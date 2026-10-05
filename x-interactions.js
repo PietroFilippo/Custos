@@ -357,7 +357,9 @@
       relevant = true;
       // A changed src/href can change a media identity; added nodes may be
       // new posts. Text-only churn (counters, times) needs no scan.
-      if (mutation.type === 'attributes') pendingScan.add(mutation.target);
+      // A changed link can mean X reused this post's element for another
+      // post: rescan the whole post, including its text.
+      if (mutation.type === 'attributes') pendingScan.add(mutation.target.closest?.('article') || mutation.target);
       else for (const node of mutation.addedNodes) if (node instanceof Element && !extensionOwnedElement(node)) pendingScan.add(node);
     }
     if (!relevant) return;

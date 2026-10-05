@@ -35,8 +35,10 @@
     strict: { threshold: 0.12, sexyWeight: 0.7, hentaiSolo: 0.4 },
   };
 
+  // Own keys only: "__proto__" or "constructor" must never select a preset.
   function presetValues(name) {
-    return SENSITIVITY_PRESETS[name] || SENSITIVITY_PRESETS.balanced;
+    return typeof name === 'string' && Object.hasOwn(SENSITIVITY_PRESETS, name)
+      ? SENSITIVITY_PRESETS[name] : SENSITIVITY_PRESETS.balanced;
   }
 
   function decidePredictions(predictions, threshold = ADULT_THRESHOLD, sexyWeight = SEXY_WEIGHT, hentaiSolo = HENTAI_SOLO_THRESHOLD) {
