@@ -12,6 +12,7 @@ const state = {
     replaceText: false, // swap censored post text for a Catholic quote
     blockLike: false,   // prevent liking posts whose media is censored
     sacredArt: false,   // presentation only: cover hidden media with a painting instead of the blur
+    groupMedia: false,  // hide all of a post's media when one item is hidden
     revealDailySec: 0,  // opt-in; shared across all X tabs
     revealPerPostSec: 3, // daily reveal time per post, 3-10 s
     revealLockUntil: null,
@@ -79,6 +80,7 @@ async function loadState() {
     replaceText: raw.replaceText === true,
     blockLike: raw.blockLike === true,
     sacredArt: raw.sacredArt === true,
+    groupMedia: raw.groupMedia === true,
     revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
     revealPerPostSec: TabCloserXUserControls.postLimitSec(raw.revealPerPostSec),
@@ -1148,13 +1150,16 @@ async function handleMessage(msg, sender) {
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
       if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
       if (msg.safeMarksPerDay != null) current.safeMarksPerDay = msg.safeMarksPerDay;
-      // Text replacement and like blocking are protections, not presentation:
-      // under an X lock they can be turned on but not off.
-      if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false))) {
-        return { ok: false, error: 'Text replacement and like blocking cannot be turned off while X protection is locked.' };
+      // Text replacement, like blocking, and hiding a post's other media are
+      // protections, not presentation: under an X lock they can be turned on
+      // but not off.
+      if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false) ||
+          (current.groupMedia && msg.groupMedia === false))) {
+        return { ok: false, error: 'Text replacement, like blocking, and hiding a post’s other media cannot be turned off while X protection is locked.' };
       }
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
+      if (typeof msg.groupMedia === 'boolean') current.groupMedia = msg.groupMedia;
       // Presentation only: the painting and the blur hide the same media, so
       // this stays editable during every lock.
       if (typeof msg.sacredArt === 'boolean') current.sacredArt = msg.sacredArt;
