@@ -7,7 +7,7 @@
 3. Run the private corpus evaluator as described below (this remains a release qualification gate, not a claim that the current branch has met it). The configured operating point must protect 100% of known misses, achieve unsafe recall of at least 98%, and release at least 90% of clearly safe samples. A recommended alternative threshold alone does not pass this gate.
 4. Run `npm run build` and `npm run lint:extension` with no errors, warnings, or notices.
 5. Run `npm run package`; inspect the archive and confirm it contains `LICENSE`, `licenses/`, and `THIRD_PARTY_NOTICES.md`, and no corpus media, credentials, source maps, development tools, or remote code.
-6. Commit everything, then run `npm run package:source` (it refuses a dirty tree). Unpack the source archive in a fresh folder, run `npm ci` and `npm run package` there, and confirm the result matches the package from step 5 file for file.
+6. Commit everything, then run `npm run package:source` (it refuses a dirty tree). Unpack the source archive in a fresh folder, run `npm ci` and `npm run package` there, and confirm it contains the same files as the package from step 5. Upload the package built from the unpacked archive, so the upload and the reviewed source always match.
 
 ## Private corpus evaluation
 
