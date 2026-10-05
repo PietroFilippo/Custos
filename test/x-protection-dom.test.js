@@ -2071,3 +2071,73 @@ test('the painting viewer credits the work and links to its museum', async () =>
     assert.equal(h.window.document.querySelector('.tabcloser-lightbox img').alt, 'The Annunciation, Botticelli');
   } finally { h.dom.window.close(); }
 });
+
+const borderlineVerdict = { verdict: 'protect', reason: 'visual', adultScore: 0.24,
+  scores: { Drawing: 0.05, Hentai: 0.01, Neutral: 0.5, Porn: 0.04, Sexy: 0.4 } };
+const withCommon = window => window.eval(readFileSync(path.join(root, 'common.js'), 'utf8'));
+
+test('“Not sensitive” marks: two-step request, hidden while pending, released once active, re-covered on removal', async () => {
+  const key = '123|https://pbs.twimg.com/media/fixture.jpg';
+  const messages = [];
+  const controls = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 2, safeMarksLeft: 2 };
+  const h = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
+    controlMessage(message) {
+      messages.push(message);
+      if (message.type !== 'xControlMarkSafe') return controls;
+      const activeAt = Date.now() + 86400000;
+      return { ...controls, activeAt, safeMarksLeft: 1, safeMarks: [{ key, active: false, activeAt }] };
+    },
+  });
+  const image = () => h.window.document.getElementById('controlled-image');
+  const findButton = label => [...h.window.document.querySelectorAll('button')].find(b => b.textContent === label);
+  try {
+    assert.equal(image().dataset.tabcloserMediaState, 'protected');
+    h.window.document.querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    const mark = findButton('Mark not sensitive…');
+    assert.ok(mark, 'Why hidden? offers a mark for a borderline classifier image');
+    mark.click();
+    assert.equal(messages.some(message => message.type === 'xControlMarkSafe'), false, 'the first click only asks');
+    mark.click();
+    await flush(h.window, 3);
+    const sent = messages.find(message => message.type === 'xControlMarkSafe');
+    assert.equal(sent.key, key);
+    assert.equal(sent.url, 'https://pbs.twimg.com/media/fixture.jpg');
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /will show from/);
+    assert.equal(image().dataset.tabcloserMediaState, 'protected', 'a pending mark keeps the image hidden');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [{ key, active: true, activeAt: 1 }] } });
+    await flush(h.window);
+    assert.equal(image().dataset.tabcloserMediaState, 'safe', 'an active mark releases the image');
+    assert.equal(image().dataset.tabcloserMediaReason, 'marked');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [] } });
+    await flush(h.window);
+    assert.equal(image().dataset.tabcloserMediaState, 'protected', 'removing the mark brings the cover back');
+  } finally { h.dom.window.close(); }
+});
+
+test('“Not sensitive” marks are not offered for confident detections, X labels, or when off under a lock', async () => {
+  const panelText = async h => {
+    h.window.document.querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    return h.window.document.querySelector('.tabcloser-control-panel').textContent;
+  };
+  const allowed = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 2, safeMarksLeft: 2 };
+  const confident = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, controlMessage: () => allowed,
+    classify: () => ({ ...borderlineVerdict, adultScore: 0.9, scores: { ...borderlineVerdict.scores, Porn: 0.85, Neutral: 0 } }) });
+  try {
+    const text = await panelText(confident);
+    assert.match(text, /too confident/);
+    assert.equal(text.includes('Mark not sensitive'), false);
+  } finally { confident.dom.window.close(); }
+  const offLocked = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
+    controlMessage: () => ({ ...allowed, safeMarksPerDay: 0, safeMarksLeft: 0, allowanceLocked: true }) });
+  try {
+    assert.equal((await panelText(offLocked)).includes('Not sensitive?'), false, 'no nudge toward a setting that is locked');
+  } finally { offLocked.dom.window.close(); }
+  const labelled = await startCoordinator(controlFixture.replace('<img src=', '<span>Warning: Nudity</span><img src='), {
+    interactions: true, prepare: withCommon, controlMessage: () => allowed, classify: () => borderlineVerdict });
+  try {
+    assert.equal(labelled.window.document.querySelector('[data-tabcloser-media-state="protected"]').dataset.tabcloserMediaReason, 'metadata');
+    assert.equal((await panelText(labelled)).includes('Not sensitive?'), false, 'X labels cannot be marked');
+  } finally { labelled.dom.window.close(); }
+});

@@ -13,7 +13,7 @@ const rule = (domain, extra = {}) => ({
 // Run the actual background script through its browser event/message seams.
 // Time, storage and tabs are isolated; no real tabs or extension data are touched.
 async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs: initialTabs,
-  url = 'https://x.com/home', xProtection = {}, xUserControls = {}, adultSites = {}, adultListFails = false } = {}) {
+  url = 'https://x.com/home', xProtection = {}, xUserControls = {}, adultSites = {}, adultListFails = false, classify = null } = {}) {
   let now = 100000;
   let mono = 0;
   let activeId = 1;
@@ -37,7 +37,12 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
       if (adultListFails) throw new Error('List unavailable');
       return { domains: new Set(['adult.example']), metadata: { count: 1, retrievedAt: '2026-09-22' } };
     } },
-    TabCloserClassifier: { warmUp() {} },
+    TabCloserClassifier: { warmUp() {}, classifyImageData: async () => classify() },
+    // Image loading for classification: a fake X image that decodes to blank pixels.
+    AbortController,
+    fetch: async target => ({ ok: true, url: target, headers: new Map([['content-type', 'image/jpeg']]), blob: async () => ({ size: 10 }) }),
+    createImageBitmap: async () => ({ close() {} }),
+    document: { createElement: () => ({ getContext: () => ({ drawImage() {}, getImageData: () => ({}) }) }) },
     browser: {
       storage: { local: {
         get: async () => structuredClone({ rules, blocks, accumSec, xProtection, xUserControls, adultSites }),
@@ -468,4 +473,53 @@ test('moving the system clock forward does not end locks once a server time is k
   assert.equal((await h.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, false, 'the lock holds after a clock jump');
   h.advance(121);
   assert.equal((await h.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, true, 'real elapsed time still ends it');
+});
+
+test('“Not sensitive” marks: borderline classifier images only, effective a day later, capped, and lock-aware', async () => {
+  const scores = values => ({ Drawing: 0.05, Hentai: 0.01, Neutral: 0.5, Porn: 0.04, Sexy: 0.4, ...values });
+  const verdicts = {
+    a: { verdict: 'protect', reason: 'visual', adultScore: 0.24, scores: scores({}) },
+    b: { verdict: 'protect', reason: 'visual', adultScore: 0.9, scores: scores({ Porn: 0.85, Neutral: 0 }) },
+    c: { verdict: 'safe', reason: 'visual', adultScore: 0.05, scores: scores({ Sexy: 0.02, Neutral: 0.88 }) },
+    d: { verdict: 'protect', reason: 'visual', adultScore: 0.24, scores: scores({}) },
+  };
+  let current = 'a';
+  const h = await start({ xProtection: { labeled: { enabled: true }, model: { enabled: true } }, classify: () => verdicts[current] });
+  const key = id => '123|https://pbs.twimg.com/media/' + id;
+  const mark = id => { current = id; return h.send({ type: 'xControlMarkSafe', key: key(id), url: 'https://pbs.twimg.com/media/' + id + '?format=jpg&name=small' }, xSender); };
+  assert.match((await mark('a')).error, /off/, 'marks are off by default');
+  for (const invalid of [6, -1, 1.5, '2']) {
+    assert.equal((await h.send({ type: 'saveXProtection', safeMarksPerDay: invalid }, settingsSender)).ok, false, String(invalid));
+  }
+  assert.equal((await h.send({ type: 'saveXProtection', safeMarksPerDay: 1 }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'xControlMarkSafe', key: key('a'), url: 'https://pbs.twimg.com/media/zzz?format=jpg' }, xSender)).ok, false, 'the image must match the key');
+  assert.equal((await h.send({ type: 'xControlMarkSafe', key: key('a'), url: 'https://pbs.twimg.com/tweet_video_thumb/a.jpg' }, xSender)).ok, false, 'GIF thumbnails cannot be marked');
+  assert.equal((await h.send({ type: 'xControlMarkSafe', key: key('a'), url: 'https://pbs.twimg.com/media/a?format=jpg' }, settingsSender)).ok, false, 'only from X');
+  assert.match((await mark('b')).error, /too confident/);
+  assert.match((await mark('c')).error, /does not hide/);
+  const marked = await mark('a');
+  assert.equal(marked.ok, true);
+  assert.equal(marked.activeAt, 100000 + 86400000, 'a mark takes effect 24 hours later');
+  let controls = await h.send({ type: 'xControlGet' }, xSender);
+  assert.deepEqual(controls.safeMarks.map(entry => [entry.key, entry.active]), [[key('a'), false]]);
+  assert.equal(controls.safeMarksLeft, 0);
+  assert.ok(h.alarms.has('xSafeMarks'), 'an alarm wakes X tabs when the mark takes effect');
+  assert.match((await mark('d')).error, /left today/, 'the daily number caps marks');
+  // A device clock jump cannot bring the mark forward once a server time is known.
+  h.events.headers({ url: 'https://x.com/', fromCache: false, responseHeaders: [{ name: 'Date', value: new Date(100000).toUTCString() }] });
+  h.jumpClock(3 * 86400);
+  controls = await h.send({ type: 'xControlGet' }, xSender);
+  assert.equal(controls.safeMarks[0].active, false);
+  h.advance(86401);
+  await h.events.alarm({ name: 'xSafeMarks' });
+  controls = await h.send({ type: 'xControlGet' }, xSender);
+  assert.equal(controls.safeMarks[0].active, true, 'real elapsed time activates it');
+  assert.equal(h.alarms.has('xSafeMarks'), false, 'no pending marks, no alarm');
+  // Locks: the number can only go down; removing a mark always works.
+  assert.equal((await h.send({ type: 'lockXReveal', durationSec: 3600 }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveXProtection', safeMarksPerDay: 3 }, settingsSender)).ok, false, 'no increase under the allowance lock');
+  assert.equal((await h.send({ type: 'saveXProtection', safeMarksPerDay: 0 }, settingsSender)).ok, true, 'decreasing is allowed');
+  assert.equal((await h.send({ type: 'xControlUnmarkSafe', key: key('a') }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'xControlGet' }, xSender)).safeMarks.length, 0);
+  assert.equal(h.saved().xUserControls.safe[key('a')], undefined, 'removal is persisted');
 });

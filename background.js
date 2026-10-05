@@ -15,6 +15,7 @@ const state = {
     revealDailySec: 0,  // opt-in; shared across all X tabs
     revealPerPostSec: 3, // daily reveal time per post, 3-10 s
     revealLockUntil: null,
+    safeMarksPerDay: 0, // "Not sensitive" marks allowed per day (0-5); 0 turns them off
     profile: null,      // see normalizeXProfile
   },
   focus: { tabId: null, domain: null, enteredAt: null }, // not persisted
@@ -81,6 +82,7 @@ async function loadState() {
     revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
     revealPerPostSec: TabCloserXUserControls.postLimitSec(raw.revealPerPostSec),
+    safeMarksPerDay: TabCloserXUserControls.safeMarksPerDay(raw.safeMarksPerDay),
     profile: normalizeXProfile(raw.profile),
   };
   // Obsolete learning data is optional cleanup and must never abort startup.
@@ -475,6 +477,9 @@ browser.tabs.onRemoved.addListener(tabId => enqueueStateChange(async () => {
 browser.alarms.onAlarm.addListener(alarm => enqueueStateChange(async () => {
   if (alarm.name === 'autoclose') {
     await fireClose();
+  } else if (alarm.name === 'xSafeMarks') {
+    await notifyXControls();
+    await scheduleSafeMarkAlarm();
   } else if (alarm.name === 'commit') {
     // Periodic safety commit so accumulated time isn't lost if event page unloads.
     if (state.focus.domain && state.focus.enteredAt != null) {
@@ -840,14 +845,59 @@ function xControlsLocked() {
   return isLockActive(state.xProtection.labeled.lockUntil) || isLockActive(state.xProtection.model.lockUntil);
 }
 
+// The reveal allowance and "Not sensitive" marks share one rule: during an X
+// lock or the allowance lock they can go down but not up.
+function xAllowanceLocked() {
+  return xControlsLocked() || isLockActive(state.xProtection.revealLockUntil);
+}
+
 function xControlSnapshot(postId) {
-  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, trustedNow(),
+  const now = trustedNow();
+  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, now,
     state.xProtection.revealPerPostSec * 1000);
   return {
     posts: Object.keys(xUserControls.posts), texts: Object.keys(xUserControls.texts), media: Object.keys(xUserControls.media),
     revealDailySec: state.xProtection.revealDailySec, revealPerPostSec: state.xProtection.revealPerPostSec,
     locked: xControlsLocked(), ...remaining,
+    safeMarks: TabCloserXUserControls.safeMarkList(xUserControls, now),
+    safeMarksPerDay: state.xProtection.safeMarksPerDay,
+    safeMarksLeft: TabCloserXUserControls.marksLeft(xUserControls, state.xProtection.safeMarksPerDay, now),
+    allowanceLocked: xAllowanceLocked(),
   };
+}
+
+// Wakes X tabs when the next pending mark takes effect. Alarms run on the
+// device clock; trusted time is never later than it, so the alarm cannot fire
+// early, and a late trusted clock simply reschedules.
+async function scheduleSafeMarkAlarm() {
+  const next = TabCloserXUserControls.nextSafeActivation(xUserControls, trustedNow());
+  if (next == null) {
+    await browser.alarms.clear('xSafeMarks').catch(() => {});
+    return;
+  }
+  browser.alarms.create('xSafeMarks', { when: Date.now() + Math.max(0, next - trustedNow()) + 1000 });
+}
+
+// A mark is accepted only for an image the classifier hides with a
+// borderline score. The background scores the image itself, so the page
+// cannot claim a low score.
+async function verifySafeMark(msg, sender) {
+  if (!Number.isInteger(sender?.tab?.id) || !isXPageUrl(sender?.tab?.url || sender?.url || '')) return { ok: false, error: 'Mark images on X.' };
+  const key = msg.key;
+  if (!TabCloserXUserControls.validMedia(key) || typeof msg.url !== 'string') return { ok: false, error: 'This image has no stable identity.' };
+  let url;
+  try { url = new URL(msg.url); } catch { return { ok: false, error: 'This image has no stable identity.' }; }
+  if (url.protocol !== 'https:' || url.hostname !== 'pbs.twimg.com' || /_video_thumb\//.test(url.pathname) ||
+      TabCloserXMetadata.normalizeMediaUrl(url.href) !== key.slice(key.indexOf('|') + 1)) {
+    return { ok: false, error: 'Only images can be marked, not videos or GIFs.' };
+  }
+  if (!state.xProtection.model.enabled) return { ok: false, error: 'Marks apply to the on-device classifier, which is off.' };
+  if (state.xProtection.safeMarksPerDay <= 0) return { ok: false, error: '“Not sensitive” marks are off. Set a daily number in Custos settings.' };
+  const result = await classifyXMedia({ kind: 'url', url: url.href, mediaKey: 'mark|' + key }, sender);
+  if (result.reason !== 'visual') return { ok: false, error: 'Custos could not check this image again. Try later.' };
+  if (result.verdict !== 'protect') return { ok: false, error: 'At your current sensitivity the classifier does not hide this image.' };
+  if (!TabCloserXVerdict.markEligible(result.scores)) return { ok: false, error: 'This detection is too confident to mark as not sensitive.' };
+  return { ok: true };
 }
 
 async function notifyXControls() {
@@ -856,7 +906,7 @@ async function notifyXControls() {
   await Promise.all(tabs.map(tab => browser.tabs.sendMessage(tab.id, { type: 'xControlsChanged', snapshot }).catch(() => {})));
 }
 
-async function handleXControlMessage(msg, sender) {
+async function handleXControlMessage(msg, sender, verified = null) {
   const fromX = Number.isInteger(sender?.tab?.id) && isXPageUrl(sender?.tab?.url || sender.url || '');
   const fromSettings = sender?.url?.split(/[?#]/)[0] === browser.runtime.getURL('options.html');
   if (!fromX && !fromSettings) return { ok: false, error: 'Unavailable outside X or Custos settings.' };
@@ -874,6 +924,28 @@ async function handleXControlMessage(msg, sender) {
       entries[msg.key] = Date.now();
     }
     await browser.storage.local.set({ xUserControls });
+    await notifyXControls();
+    return { ok: true, ...xControlSnapshot() };
+  }
+  if (msg.type === 'xControlMarkSafe') {
+    // Only reachable after verifySafeMark; the flag comes from the listener,
+    // never from the message.
+    if (!fromX || verified?.ok !== true) return { ok: false, error: 'Mark images on X.' };
+    const result = TabCloserXUserControls.markSafe(xUserControls, {
+      key: msg.key, perDay: state.xProtection.safeMarksPerDay, now: trustedNow(),
+    });
+    if (!result.ok) return { ...xControlSnapshot(), ...result };
+    await browser.storage.local.set({ xUserControls });
+    await scheduleSafeMarkAlarm();
+    await notifyXControls();
+    return { ...xControlSnapshot(), ...result };
+  }
+  if (msg.type === 'xControlUnmarkSafe') {
+    // Removing a mark only makes protection stricter, so locks never block it.
+    if (!TabCloserXUserControls.validMedia(msg.key)) return { ok: false, error: 'This image has no stable identity.' };
+    delete xUserControls.safe[msg.key];
+    await browser.storage.local.set({ xUserControls });
+    await scheduleSafeMarkAlarm();
     await notifyXControls();
     return { ok: true, ...xControlSnapshot() };
   }
@@ -1049,6 +1121,14 @@ async function handleMessage(msg, sender) {
           return { ok: false, error: 'The time per post cannot increase while its allowance lock or X protection lock is active.' };
         }
       }
+      if (msg.safeMarksPerDay != null) {
+        if (TabCloserXUserControls.safeMarksPerDay(msg.safeMarksPerDay) !== msg.safeMarksPerDay) {
+          return { ok: false, error: 'Choose 0 to ' + TabCloserXUserControls.MAX_SAFE_MARKS_PER_DAY + ' marks per day.' };
+        }
+        if (xAllowanceLocked() && msg.safeMarksPerDay > current.safeMarksPerDay) {
+          return { ok: false, error: '“Not sensitive” marks cannot increase while the allowance lock or X protection lock is active.' };
+        }
+      }
       if (current.labeled.enabled && !labeledEnabled && isLockActive(current.labeled.lockUntil)) {
         return { ok: false, error: 'X-label protection is locked until ' + new Date(current.labeled.lockUntil).toLocaleString() + '.' };
       }
@@ -1067,6 +1147,7 @@ async function handleMessage(msg, sender) {
       current.model.enabled = modelEnabled;
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
       if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
+      if (msg.safeMarksPerDay != null) current.safeMarksPerDay = msg.safeMarksPerDay;
       // Text replacement and like blocking are protections, not presentation:
       // under an X lock they can be turned on but not off.
       if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false))) {
@@ -1183,6 +1264,14 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     if (bootPromise) await bootPromise;
     return handleMessage(msg, sender);
   }
+  if (msg.type === 'xControlMarkSafe') {
+    // Re-scoring can take a moment; it runs outside the state queue, and the
+    // mark itself is committed (and re-validated) inside it.
+    if (bootPromise) await bootPromise;
+    const verified = await verifySafeMark(msg, sender);
+    if (!verified.ok) return verified;
+    return enqueueStateChange(() => handleXControlMessage(msg, sender, verified));
+  }
   return enqueueStateChange(() => handleMessage(msg, sender));
 });
 
@@ -1193,6 +1282,7 @@ bootPromise = (async () => {
   if (state.adultSites.enabled) await loadAdultList();
   if (state.xProtection.model.enabled) TabCloserClassifier.warmUp();
   await ensureExistingXTabsProtected();
+  await scheduleSafeMarkAlarm();
   // Periodic safety commit (0.5 min = Firefox MV3 minimum for installed addons)
   browser.alarms.create('commit', { periodInMinutes: 0.5 });
   await enforceAdultSites();

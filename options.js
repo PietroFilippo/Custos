@@ -11,6 +11,8 @@ const $xReveal = document.getElementById('xRevealDailySec');
 const $xRevealPerPost = document.getElementById('xRevealPerPostSec');
 const $xRevealStatus = document.getElementById('xRevealStatus');
 const $xManualHides = document.getElementById('xManualHides');
+const $xSafeMarksPerDay = document.getElementById('xSafeMarksPerDay');
+const $xSafeMarks = document.getElementById('xSafeMarks');
 const $adultEnabled = document.getElementById('adultSitesEnabled');
 const $adultSafeSearch = document.getElementById('adultSafeSearch');
 const $profile = {
@@ -33,6 +35,7 @@ let snapshot = { rules: [], accumSec: {}, blocks: {}, focus: {}, xProtection: {}
 let workingRules = null;
 let saveT = null;
 let manualListKey = '';
+let safeListKey = '';
 let revealDraft = false;
 
 function el(tag, attrs, children) {
@@ -631,6 +634,7 @@ function renderXProtection() {
   renderReveals(config, locks);
   renderProfile(config, locks);
   renderManualHides(snapshot.xUserControls || { posts: [], media: [] });
+  renderSafeMarks(config, locks, snapshot.xUserControls || {});
 }
 
 function renderLevelLock(config, level, sensitivity, locks) {
@@ -716,7 +720,7 @@ function renderReveals(config, locks) {
         label: 'Lock allowance…',
         title: 'Lock the reveal allowance',
         scope: seconds > 0 ? seconds + ' seconds per day' : 'Reveals off (0 seconds)',
-        help: 'Until the lock ends, the allowance and the time per post can only go down. Locking 0 keeps reveals off. A lock can’t be shortened.',
+        help: 'Until the lock ends, the allowance, the time per post, and “Not sensitive” marks can only go down. Locking 0 keeps reveals off. A lock can’t be shortened.',
         async onLock(durationSec) {
           if (!await saveRevealAllowance()) return document.getElementById('xRevealFeedback').textContent;
           const result = await browser.runtime.sendMessage({ type: 'lockXReveal', durationSec });
@@ -751,6 +755,57 @@ document.getElementById('saveXReveal').addEventListener('click', saveRevealAllow
 $xRevealPerPost.addEventListener('change', async () => {
   const result = await browser.runtime.sendMessage({ type: 'saveXProtection', revealPerPostSec: Number($xRevealPerPost.value) });
   feedback('xRevealFeedback', result?.ok ? 'Time per post saved.' : result?.error || 'Unable to save.', !result?.ok);
+  await refreshSnapshot();
+  renderSettings();
+});
+
+// === "Not sensitive" marks ===
+// They share the reveal allowance's lock rule: under that lock or an X lock
+// the daily number can only go down. Removing a mark is always allowed.
+function renderSafeMarks(config, locks, controls) {
+  const perDay = Number.isInteger(config.safeMarksPerDay) ? config.safeMarksPerDay : 0;
+  const xLocked = locks.labeled || locks.model;
+  const locked = xLocked || isLocked(config.revealLockUntil);
+  $xSafeMarksPerDay.value = String(perDay);
+  for (const option of $xSafeMarksPerDay.options) option.disabled = locked && Number(option.value) > perDay;
+  const note = document.getElementById('xSafeLockNote');
+  note.hidden = !locked;
+  note.textContent = !locked ? '' : xLocked
+    ? 'X protection is locked, so the number of marks can only go down.'
+    : 'The allowance lock covers marks too: the number can only go down until it ends.';
+  const marks = Array.isArray(controls.safeMarks) ? controls.safeMarks : [];
+  const key = JSON.stringify(marks);
+  if (key === safeListKey) return;
+  safeListKey = key;
+  const pending = marks.filter(mark => !mark.active).length;
+  document.getElementById('xSafeSummary').textContent = marks.length
+    ? marks.length + ' image' + (marks.length === 1 ? '' : 's') + ' marked' + (pending ? ' · ' + pending + ' waiting' : '')
+    : 'No images marked';
+  $xSafeMarks.replaceChildren(...(marks.length ? [] : [el('li', { class: 'empty' }, 'No images marked not sensitive.')]));
+  for (const mark of marks) {
+    const postId = mark.key.split('|')[0];
+    const remove = el('button', { type: 'button', class: 'btn btn-sm' }, 'Remove');
+    const row = el('li', null, [
+      el('span', null, [
+        el('span', { class: 'kind' }, mark.active ? 'Showing' : 'Shows ' + formatLockDate(mark.activeAt)),
+        el('a', { href: 'https://x.com/i/status/' + postId, target: '_blank', rel: 'noopener noreferrer' }, 'x.com/i/status/' + postId),
+      ]),
+      remove,
+    ]);
+    row.title = mark.key.slice(mark.key.indexOf('|') + 1);
+    remove.addEventListener('click', async () => {
+      const result = await browser.runtime.sendMessage({ type: 'xControlUnmarkSafe', key: mark.key });
+      if (!result?.ok) feedback('xSafeFeedback', result?.error || 'Unable to remove.', true);
+      await refreshSnapshot();
+      renderSettings();
+    });
+    $xSafeMarks.appendChild(row);
+  }
+}
+
+$xSafeMarksPerDay.addEventListener('change', async () => {
+  const result = await browser.runtime.sendMessage({ type: 'saveXProtection', safeMarksPerDay: Number($xSafeMarksPerDay.value) });
+  feedback('xSafeFeedback', result?.ok ? 'Saved.' : result?.error || 'Unable to save.', !result?.ok);
   await refreshSnapshot();
   renderSettings();
 });

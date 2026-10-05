@@ -80,3 +80,36 @@ test('the per-post limit is configurable from 3 to 10 seconds and caps each post
   assert.match(spent.error, /used its 8 seconds/);
   assert.equal(controls.remaining(state, 30, '123', today + 9000, 5000).postMs, 0, 'lowering the limit below usage leaves nothing');
 });
+
+test('"Not sensitive" marks take effect a day later, are capped per day, and unmarking never refunds', () => {
+  const state = controls.normalize();
+  const key = id => '123|https://pbs.twimg.com/media/' + id;
+  assert.equal(controls.markSafe(state, { key: key('a'), perDay: 0, now: today }).ok, false, 'off at 0');
+  const first = controls.markSafe(state, { key: key('a'), perDay: 2, now: today });
+  assert.equal(first.activeAt, today + controls.SAFE_MARK_DELAY_MS);
+  assert.equal(controls.markSafe(state, { key: key('a'), perDay: 2, now: today }).ok, false, 'already marked');
+  assert.equal(controls.markSafe(state, { key: 'not-media', perDay: 2, now: today }).ok, false);
+  assert.equal(controls.markSafe(state, { key: key('b'), perDay: 2, now: today }).ok, true);
+  delete state.safe[key('b')];
+  assert.equal(controls.marksLeft(state, 2, today), 0, 'removing a mark does not give the mark back');
+  assert.equal(controls.markSafe(state, { key: key('c'), perDay: 2, now: today }).ok, false);
+  assert.deepEqual(controls.safeMarkList(state, today).map(mark => mark.active), [false]);
+  assert.equal(controls.nextSafeActivation(state, today), first.activeAt);
+  const tomorrow = today + controls.SAFE_MARK_DELAY_MS;
+  assert.deepEqual(controls.safeMarkList(state, tomorrow).map(mark => mark.active), [true]);
+  assert.equal(controls.nextSafeActivation(state, tomorrow), null);
+  assert.equal(controls.marksLeft(state, 2, tomorrow), 2, 'a new day brings the marks back');
+});
+
+test('stored marks are validated and can never take effect sooner than a day after marking', () => {
+  const state = controls.normalize({ safe: {
+    '123|https://pbs.twimg.com/media/a': { at: today, activeAt: today + 1000 },
+    'bad': { at: today, activeAt: today },
+    '456|https://pbs.twimg.com/media/b': { at: 'x', activeAt: today },
+  }, ledger: { marks: -3 } });
+  assert.deepEqual(Object.keys(state.safe), ['123|https://pbs.twimg.com/media/a']);
+  assert.equal(state.safe['123|https://pbs.twimg.com/media/a'].activeAt, today + controls.SAFE_MARK_DELAY_MS);
+  assert.equal(state.ledger.marks, 0);
+  assert.equal(controls.safeMarksPerDay(6), 0);
+  assert.equal(controls.safeMarksPerDay(3), 3);
+});

@@ -56,6 +56,17 @@
     };
   }
 
+  // "Not sensitive" marks are for borderline calls only. A confident
+  // detection (a strong explicit or strongly suggestive score) can never be
+  // marked, whatever the sensitivity preset.
+  const MARK_EXPLICIT_CEILING = 0.4;
+  const MARK_SUGGESTIVE_CEILING = 0.85;
+  function markEligible(scores) {
+    if (!scores || ![...EXPECTED_CLASSES].every(name => Number.isFinite(scores[name]))) return false;
+    const hentai = scores.Hentai > scores.Drawing || scores.Hentai >= HENTAI_SOLO_THRESHOLD ? scores.Hentai : 0;
+    return scores.Porn + hentai < MARK_EXPLICIT_CEILING && scores.Sexy < MARK_SUGGESTIVE_CEILING;
+  }
+
   return {
     ADULT_CLASSES,
     ADULT_THRESHOLD,
@@ -66,7 +77,10 @@
     MODEL_VERSION,
     SENSITIVITY_PRESETS,
     SEXY_WEIGHT,
+    MARK_EXPLICIT_CEILING,
+    MARK_SUGGESTIVE_CEILING,
     decidePredictions,
+    markEligible,
     normalizeScores,
     presetValues,
   };

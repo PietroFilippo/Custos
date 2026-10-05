@@ -327,11 +327,16 @@
     notice.setAttribute('aria-label', 'Reply from a hidden account');
     const text = document.createElement('span');
     text.className = 'tabcloser-collapsed-text';
-    text.textContent = 'Reply from a hidden account ';
-    const at = document.createElement('span');
-    at.className = 'tabcloser-collapsed-handle';
-    at.textContent = '@' + handle;
-    text.appendChild(at);
+    if (config.names) {
+      // Name replacement hides the real @handle everywhere, this line included.
+      text.textContent = config.alias === 'plain' ? 'Reply from a hidden account' : 'Reply from ' + aliasFor(handle);
+    } else {
+      text.textContent = 'Reply from a hidden account ';
+      const at = document.createElement('span');
+      at.className = 'tabcloser-collapsed-handle';
+      at.textContent = '@' + handle;
+      text.appendChild(at);
+    }
     // No one-click reveal: "Show…" explains and offers the metered hold.
     const show = document.createElement('button');
     show.type = 'button';

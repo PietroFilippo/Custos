@@ -128,7 +128,8 @@ test('replies from flagged accounts collapse behind the metered reveal; the foca
     assert.equal(h.document.getElementById('friend-reply').hasAttribute('data-tabcloser-collapsed'), false);
     assert.equal(reply.getAttribute('data-tabcloser-collapsed'), 'spicy_one');
     const notice = reply.querySelector('.tabcloser-collapsed-reply');
-    assert.match(notice.textContent, /Reply from a hidden account @spicy_one/);
+    assert.match(notice.textContent, /Reply from \S+ ✝/, 'with name replacement on, the line uses the alias');
+    assert.equal(notice.textContent.includes('spicy_one'), false, 'the real handle stays hidden');
     let navigated = 0;
     reply.addEventListener('click', () => { navigated++; });
     const show = [...notice.querySelectorAll('button')].find(button => button.textContent === 'Show…');
@@ -213,5 +214,13 @@ test('aliases follow accounts when X reuses an element for another author', asyn
     await h.settle();
     assert.equal(friend.querySelector('.tabcloser-alias'), null, 'the alias goes when the element returns to an unflagged account');
     assert.equal(friend.querySelector('.tabcloser-name-hidden, .tabcloser-handle-hidden'), null);
+  } finally { h.close(); }
+});
+
+test('without name replacement, a collapsed reply names the account by its handle', async () => {
+  const h = await start({ ...flaggedProfile, names: false });
+  try {
+    const notice = h.document.querySelector('#reply .tabcloser-collapsed-reply');
+    assert.match(notice.textContent, /Reply from a hidden account @spicy_one/);
   } finally { h.close(); }
 });

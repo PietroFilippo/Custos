@@ -54,7 +54,7 @@
         <div class="panel-head">
           <div>
             <h2 id="adultTitle">Adult websites</h2>
-            <p class="help">Blocks known pornography websites and their subdomains using a list bundled with the extension. Matching happens on this device. It is a known-domain blocker, not a content scanner.</p>
+            <p class="help">Blocks known pornography websites and their subdomains using a list bundled with the extension. Matching happens on this device. It is a known-domain blocker, not a content scanner: the list can include a harmless site by mistake and can miss new ones.</p>
           </div>
         </div>
         <div class="adult-toggle">
@@ -78,7 +78,7 @@
         <div class="panel-head">
           <div>
             <h2 id="xProtectionTitle">X / Twitter protection</h2>
-            <p class="help">Hides sensitive media on x.com. Everything runs on this device; no media or scores leave the browser.</p>
+            <p class="help">Hides sensitive media on x.com. Everything runs on this device; no media or scores leave the browser. Automatic detection is not perfect: it can hide harmless media and miss some sensitive media.</p>
           </div>
         </div>
 
@@ -161,6 +161,27 @@
           <div id="xRevealLock" class="lock-row"></div>
         </div>
 
+        <div class="group" id="x-marks">
+          <div class="group-head">
+            <h3>“Not sensitive” marks</h3>
+            <p class="help">For classifier mistakes. “Why hidden?” can mark a hidden image as not sensitive, but the mark only takes effect <strong>24 hours later</strong>, works only for borderline detections (never X labels, confident detections, or videos), and covers only that image. Remove a mark any time to hide the image again.</p>
+          </div>
+          <div class="reveal-field">
+            <label for="xSafeMarksPerDay">Marks allowed</label>
+            <select id="xSafeMarksPerDay" class="input">
+              <option value="0">Off</option><option value="1">1</option><option value="2">2</option>
+              <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <span>per day</span>
+          </div>
+          <p id="xSafeFeedback" class="inline-feedback" role="status"></p>
+          <p id="xSafeLockNote" class="help lock-icon" hidden></p>
+          <details>
+            <summary id="xSafeSummary">No images marked</summary>
+            <ul id="xSafeMarks" class="hide-list"></ul>
+          </details>
+        </div>
+
         <div class="group" id="x-profile">
           <div class="group-head">
             <h3>Profile protection</h3>
@@ -228,10 +249,11 @@
           <div><h2 id="aboutTitle">About Custos</h2><p class="help">Site timers, known adult-site blocking, and sensitive-media protection on X.</p></div>
         </div>
         <div class="about-grid">
-          <div><h3>On your device</h3><p>Classification and domain matching run locally. Rules, locks, manual hides, and reveal usage stay in this browser profile. Custos does not upload your browsing history or media for analysis.</p></div>
+          <div><h3>On your device</h3><p>Classification and domain matching run locally. Rules, locks, manual hides, “Not sensitive” marks, and reveal usage stay in this browser profile. Custos does not upload your browsing history or media for analysis.</p></div>
           <div><h3>Browser access</h3><p>Website access lets Custos enforce your rules and protect media on X. Locks protect settings inside Custos; the browser can still disable or remove the extension.</p></div>
+          <div><h3>Not perfect</h3><p>Automatic checks can hide harmless content and miss some sensitive content. Custos lowers exposure; it cannot guarantee that nothing gets through.</p></div>
         </div>
-        <div class="about-links"><a href="https://github.com/PietroFilippo/Custos#readme" target="_blank" rel="noopener noreferrer">Usage &amp; project</a><a href="https://github.com/PietroFilippo/Custos/issues" target="_blank" rel="noopener noreferrer">Report an issue</a><a href="THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a></div>
+        <div class="about-links"><a href="https://github.com/PietroFilippo/Custos#readme" target="_blank" rel="noopener noreferrer">Usage &amp; project</a><a href="https://github.com/PietroFilippo/Custos/issues" target="_blank" rel="noopener noreferrer">Report an issue</a><a href="https://github.com/PietroFilippo/Custos/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy</a><a href="THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a></div>
       </section>
     </main>
   </div>
