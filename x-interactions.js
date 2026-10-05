@@ -47,6 +47,7 @@
     if (profile) return profile;
     const reason = root.dataset.tabcloserMediaReason;
     if (reason === 'manual') return { kind: 'Hidden by you', text: 'You chose to hide this image or video. The choice is saved on this device.' };
+    if (reason === 'group') return { kind: 'Same post', text: 'Another image or video in this post was hidden, and “Hide all of a post’s media when one is hidden” is on.' };
     if (reason === 'metadata') return { kind: 'X label', text: 'X supplied a sensitive-content label or warning for this media, post, or author. Labels come from X or the poster and can be wrong.' };
     if (reason !== 'visual') return { kind: 'Could not check', text: 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while Custos retries when possible.' };
     const decision = TabCloserXCoordinator.decisionFor(root);

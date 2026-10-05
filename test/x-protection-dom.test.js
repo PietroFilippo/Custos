@@ -2141,3 +2141,73 @@ test('“Not sensitive” marks are not offered for confident detections, X labe
     assert.equal((await panelText(labelled)).includes('Not sensitive?'), false, 'X labels cannot be marked');
   } finally { labelled.dom.window.close(); }
 });
+
+const twoPhotoPost = '<article><a href="/example/status/200"><time>1h</time></a><div data-testid="tweetText">Two photos</div>' +
+  '<a href="/example/status/200/photo/1"><div id="photo-a" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/aaa.jpg"></div></a>' +
+  '<a href="/example/status/200/photo/2"><div id="photo-b" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/bbb.jpg"></div></a></article>';
+const groupConfig = { labeled: { enabled: true }, model: { enabled: true, sensitivity: 'balanced' }, groupMedia: true };
+
+test('with "hide all of a post’s media" on, a safe photo waits for its sibling and is hidden with it', async () => {
+  let finishA;
+  const h = await startCoordinator(twoPhotoPost, { config: groupConfig, interactions: true,
+    classify: message => message.url?.includes('aaa') ? new Promise(resolve => { finishA = resolve; }) : { verdict: 'safe', reason: 'visual' } });
+  const state = id => h.window.document.getElementById(id).dataset;
+  try {
+    assert.equal(state('photo-b').tabcloserMediaState, 'pending', 'a safe photo never shows while its sibling is unchecked');
+    finishA(borderlineVerdict);
+    await flush(h.window, 12);
+    assert.equal(state('photo-a').tabcloserMediaReason, 'visual');
+    assert.equal(state('photo-b').tabcloserMediaState, 'protected');
+    assert.equal(state('photo-b').tabcloserMediaReason, 'group');
+    h.window.document.getElementById('photo-b').closest('a').querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /Another image or video in this post was hidden/);
+  } finally { h.dom.window.close(); }
+});
+
+test('with the option off, or when every photo is safe, each photo keeps its own verdict', async () => {
+  const off = await startCoordinator(twoPhotoPost, {
+    classify: message => message.url?.includes('aaa') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  try {
+    await flush(off.window, 12);
+    assert.equal(off.window.document.getElementById('photo-a').dataset.tabcloserMediaState, 'protected');
+    assert.equal(off.window.document.getElementById('photo-b').dataset.tabcloserMediaState, 'safe');
+  } finally { off.dom.window.close(); }
+  const safe = await startCoordinator(twoPhotoPost, { config: groupConfig });
+  try {
+    await flush(safe.window, 12);
+    assert.equal(safe.window.document.getElementById('photo-a').dataset.tabcloserMediaState, 'safe');
+    assert.equal(safe.window.document.getElementById('photo-b').dataset.tabcloserMediaState, 'safe');
+  } finally { safe.dom.window.close(); }
+});
+
+test('a hidden quoted photo does not hide the media of the post that quotes it', async () => {
+  const html = '<article><a href="/outer/status/300"><time>1h</time></a><div data-testid="tweetText">Look</div>' +
+    '<a href="/outer/status/300/photo/1"><div id="outer-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/outer.jpg"></div></a>' +
+    '<div role="link"><a href="/inner/status/301"><time>2h</time></a>' +
+    '<a href="/inner/status/301/photo/1"><div id="inner-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/inner.jpg"></div></a></div></article>';
+  const h = await startCoordinator(html, { config: groupConfig,
+    classify: message => message.url?.includes('inner') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  try {
+    await flush(h.window, 12);
+    assert.equal(h.window.document.getElementById('inner-photo').dataset.tabcloserMediaState, 'protected');
+    assert.equal(h.window.document.getElementById('outer-photo').dataset.tabcloserMediaState, 'safe');
+  } finally { h.dom.window.close(); }
+});
+
+test('when the photo that hid its post is marked not sensitive, the others are checked again on their own', async () => {
+  const controls = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 1, safeMarksLeft: 1 };
+  const h = await startCoordinator(twoPhotoPost, { config: groupConfig, interactions: true, prepare: withCommon, controlMessage: () => controls,
+    classify: message => message.url?.includes('aaa') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  const state = id => h.window.document.getElementById(id).dataset;
+  try {
+    await flush(h.window, 12);
+    assert.equal(state('photo-b').tabcloserMediaReason, 'group');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls,
+      safeMarks: [{ key: '200|https://pbs.twimg.com/media/aaa.jpg', active: true, activeAt: 1 }] } });
+    await flush(h.window, 12);
+    assert.equal(state('photo-a').tabcloserMediaState, 'safe');
+    assert.equal(state('photo-a').tabcloserMediaReason, 'marked');
+    assert.equal(state('photo-b').tabcloserMediaState, 'safe', 'the sibling is released after its own check');
+  } finally { h.dom.window.close(); }
+});

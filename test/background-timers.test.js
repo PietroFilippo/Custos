@@ -456,10 +456,14 @@ test('a trailing dot in the host cannot escape timers, cooldowns, or protections
   assert.match(h.updates.at(-1)?.url || '', /blocked\.html\?domain=x\.com/);
 });
 
-test('text replacement and like blocking cannot be switched off under an X lock', async () => {
-  const locked = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 }, replaceText: true, blockLike: true } });
+test('text replacement, like blocking, and post-wide hiding cannot be switched off under an X lock', async () => {
+  const locked = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 }, replaceText: true, blockLike: true, groupMedia: true } });
   assert.equal((await locked.send({ type: 'saveXProtection', replaceText: false }, settingsSender)).ok, false);
   assert.equal((await locked.send({ type: 'saveXProtection', blockLike: false }, settingsSender)).ok, false);
+  assert.equal((await locked.send({ type: 'saveXProtection', groupMedia: false }, settingsSender)).ok, false);
+  assert.equal((await locked.state()).xProtection.groupMedia, true);
+  const lockedOff = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 } } });
+  assert.equal((await lockedOff.send({ type: 'saveXProtection', groupMedia: true }, settingsSender)).ok, true, 'turning it on is stricter');
   assert.equal((await locked.send({ type: 'saveXProtection', sacredArt: true }, settingsSender)).ok, true, 'presentation stays free');
   const open = await start({ xProtection: { labeled: { enabled: true }, replaceText: true } });
   assert.equal((await open.send({ type: 'saveXProtection', replaceText: false }, settingsSender)).ok, true);

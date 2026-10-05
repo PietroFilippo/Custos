@@ -4,7 +4,7 @@
 // player is never used, decoded, or seeked by Custos.
 const xProtectionCoordinatorVersion = 'media-controls-v2';
 let mode = 'off';
-let settings = { replaceText: false, blockLike: false, sacredArt: false, sensitivity: 'balanced' };
+let settings = { replaceText: false, blockLike: false, sacredArt: false, groupMedia: false, sensitivity: 'balanced' };
 let protectionKey = null;
 let operationId = 0;
 const sensitiveUrls = new Set();
@@ -651,7 +651,7 @@ function setRootState(root, state, reason) {
   // shield. The notice (and the optional painting) is reserved for confirmed
   // verdicts; a failure verdict that will still be retried renders like the
   // pending state so a successful retry never pops a notice in and out.
-  const mature = reason === 'visual' || reason === 'metadata' || reason === 'manual';
+  const mature = reason === 'visual' || reason === 'metadata' || reason === 'manual' || reason === 'group';
   const willRetry = state === 'protected' && !mature && retryableReason.test(reason || '') &&
     (rootRecords.get(root)?.retries || 0) < retryDelaysMs.length;
   const shieldOnly = state === 'pending' || willRetry;
@@ -1162,6 +1162,123 @@ function scheduleRetry(root) {
 // false positive must not censor innocent neighbors. Failure verdicts
 // (couldn't check) are also root-scoped so a retry can release them. Only X's
 // own tweet-level label ('metadata') hides every media cell in that tweet layer.
+// "Hide all of a post's media when one is hidden": media keys hidden by a
+// classifier verdict, per tweet. Any other media of that tweet is hidden too,
+// with the reason 'group'. A quoted card is its own tweet, so it never hides
+// the post that quotes it, or the reverse.
+const groupTriggersByTweetId = new Map();
+// Safe media waiting for the rest of its post to be checked.
+const heldRoots = new Set();
+let heldTimer = null;
+
+function groupKeyFor(root) {
+  return stableMediaVerificationKey(root) || rootFingerprint(root);
+}
+
+function groupProtects(root) {
+  if (!settings.groupMedia) return false;
+  const triggers = groupTriggersByTweetId.get(statusIdFor(root));
+  if (!triggers) return false;
+  const own = groupKeyFor(root);
+  return [...triggers].some(key => key !== own);
+}
+
+function layerSiblings(root) {
+  const article = root.closest('article');
+  if (!article) return [];
+  const layer = tweetLayerFor(root, article);
+  const tweetId = statusIdFor(root);
+  return candidateRootsWithin(layer).filter(candidate => candidate !== root && tweetLayerFor(candidate, article) === layer &&
+    statusIdFor(candidate) === tweetId);
+}
+
+// Siblings still being checked (held siblings already passed their own check).
+function siblingsUndecided(root) {
+  return layerSiblings(root).some(sibling => {
+    const state = sibling.dataset.tabcloserMediaState;
+    return (!state || state === 'pending') && rootRecords.get(sibling)?.status !== 'held';
+  });
+}
+
+function spreadToSiblings(root) {
+  if (!settings.groupMedia) return;
+  const tweetId = statusIdFor(root);
+  if (!tweetId) return;
+  const triggers = groupTriggersByTweetId.get(tweetId) || new Set();
+  triggers.add(groupKeyFor(root));
+  groupTriggersByTweetId.delete(tweetId);
+  groupTriggersByTweetId.set(tweetId, triggers);
+  trimOldestMapEntries(groupTriggersByTweetId, 500);
+  for (const sibling of layerSiblings(root)) {
+    const reason = sibling.dataset.tabcloserMediaReason;
+    if (sibling.dataset.tabcloserMediaState === 'protected' && ['visual', 'metadata', 'manual', 'group'].includes(reason)) continue;
+    if (groupProtects(sibling)) setRootState(sibling, 'protected', 'group');
+  }
+  settleHeldRoots();
+}
+
+// When the media that hid its post is released (for example by a "Not
+// sensitive" mark), the media hidden only because of it is checked again.
+function dropGroupTrigger(root) {
+  const tweetId = statusIdFor(root);
+  const triggers = groupTriggersByTweetId.get(tweetId);
+  if (!triggers?.delete(groupKeyFor(root))) return;
+  if (!triggers.size) groupTriggersByTweetId.delete(tweetId);
+  document.querySelectorAll('[data-tabcloser-media-reason="group"]').forEach(other => {
+    if (statusIdFor(other) !== tweetId || groupProtects(other)) return;
+    const record = rootRecords.get(other);
+    if (record) record.status = 'stale';
+    discoverRoot(other);
+  });
+}
+
+// With the option on, safe media waits (still covered) until every other
+// media item of its post has a verdict, so one never shows before another
+// hides it.
+function releaseSafe(root, reason, remember) {
+  if (groupProtects(root)) {
+    setRootState(root, 'protected', 'group');
+    return;
+  }
+  const record = rootRecords.get(root);
+  if (settings.groupMedia && record && siblingsUndecided(root)) {
+    record.status = 'held';
+    record.release = { reason, remember };
+    heldRoots.add(root);
+    heldTimer ??= setInterval(settleHeldRoots, 500);
+    return;
+  }
+  if (remember) rememberVerifiedSafeMedia(root);
+  dropGroupTrigger(root);
+  setRootState(root, 'safe', reason);
+}
+
+function settleHeldRoots() {
+  for (const root of [...heldRoots]) {
+    const record = rootRecords.get(root);
+    if (record?.status !== 'held' || !root.isConnected || root.dataset.tabcloserMediaState !== 'pending') {
+      heldRoots.delete(root);
+      continue;
+    }
+    if (groupProtects(root)) {
+      heldRoots.delete(root);
+      record.status = 'grouped';
+      setRootState(root, 'protected', 'group');
+      continue;
+    }
+    if (siblingsUndecided(root)) continue;
+    heldRoots.delete(root);
+    record.status = 'safe';
+    if (record.release?.remember) rememberVerifiedSafeMedia(root);
+    dropGroupTrigger(root);
+    setRootState(root, 'safe', record.release?.reason || 'visual');
+  }
+  if (!heldRoots.size && heldTimer != null) {
+    clearInterval(heldTimer);
+    heldTimer = null;
+  }
+}
+
 function protectUnsafeResult(root, reason) {
   if (reason === 'metadata') {
     protectGroup(root, reason);
@@ -1219,6 +1336,7 @@ async function classifyRoot(root, fingerprint, token) {
         }
         recordDecision(result, 'image');
         protectUnsafeResult(root, result.reason || 'visual');
+        if ((result.reason || 'visual') === 'visual') spreadToSiblings(root);
         return;
       }
     }
@@ -1271,6 +1389,7 @@ async function classifyRoot(root, fingerprint, token) {
           protectGroup(root, 'visual');
         } else {
           protectUnsafeResult(root, result.reason || 'visual');
+          if ((result.reason || 'visual') === 'visual') spreadToSiblings(root);
         }
         return;
       }
@@ -1282,6 +1401,7 @@ async function classifyRoot(root, fingerprint, token) {
     if (thumbnailVerdict) {
       recordDecision({ ...thumbnailVerdict, fallback: directVideoSource ? 'Video check unavailable: ' + videoUnavailableReason : 'No direct video source available' }, 'video thumbnail');
       protectUnsafeResult(root, 'visual');
+      spreadToSiblings(root);
       return;
     }
     ensureClassificationActive(isActive);
@@ -1289,7 +1409,11 @@ async function classifyRoot(root, fingerprint, token) {
       discoverRoot(root);
       return;
     }
-    if (metadataProtects(root) || root.dataset.tabcloserMediaState === 'protected') {
+    if (!metadataProtects(root) && groupProtects(root)) {
+      setRootState(root, 'protected', 'group');
+      return;
+    }
+    if (metadataProtects(root) || (root.dataset.tabcloserMediaState === 'protected' && root.dataset.tabcloserMediaReason !== 'group')) {
       protectGroup(root, root.dataset.tabcloserMediaReason || 'metadata');
       return;
     }
@@ -1297,9 +1421,6 @@ async function classifyRoot(root, fingerprint, token) {
       protectGroup(root, 'visual');
       return;
     }
-    // A release by mark is never cached as verified safe: removing the mark
-    // must bring the cover back.
-    if (!releasedByMark) rememberVerifiedSafeMedia(root);
     const pageStatusId = statusIdFromHref(location.pathname);
     if (pageStatusId) {
       const rootStatusId = statusIdFor(root);
@@ -1313,7 +1434,9 @@ async function classifyRoot(root, fingerprint, token) {
         knownSensitiveTweet: !!rootStatusId && sensitiveTweetIds.has(rootStatusId),
       });
     }
-    setRootState(root, 'safe', releasedByMark ? 'marked' : 'visual');
+    // A release by mark is never cached as verified safe: removing the mark
+    // must bring the cover back.
+    releaseSafe(root, releasedByMark ? 'marked' : 'visual', !releasedByMark);
   } catch (error) {
     if (isActive()) {
       protectUnsafeResult(root, /timeout/i.test(error?.message || '') ? 'timeout' : 'error');
@@ -1334,6 +1457,7 @@ function drainClassificationQueue() {
     activeClassifications += 1;
     classifyRoot(task.root, task.fingerprint, task.token).finally(() => {
       activeClassifications -= 1;
+      if (heldRoots.size) settleHeldRoots();
       setTimeout(drainClassificationQueue, 0);
     });
   }
@@ -1380,10 +1504,16 @@ function discoverRoot(root) {
     protectGroup(root, 'visual');
     return;
   }
+  if (groupProtects(root)) {
+    const token = ++operationId;
+    rootRecords.set(root, { fingerprint, status: 'grouped', token, retries: 0 });
+    setRootState(root, 'protected', 'group');
+    return;
+  }
   if (hasVerifiedSafeMedia(root)) {
     const token = ++operationId;
     rootRecords.set(root, { fingerprint, status: 'safe', token, retries: 0 });
-    setRootState(root, 'safe', 'visual');
+    releaseSafe(root, 'visual', false);
     return;
   }
   const previous = rootRecords.get(root);
@@ -1393,7 +1523,7 @@ function discoverRoot(root) {
     // React may rebuild the text node without touching the media; re-apply
     // the quote (idempotent) for confirmed-mature roots.
     const reason = root.dataset.tabcloserMediaReason;
-    if (domState === 'protected' && (reason === 'visual' || reason === 'metadata')) applyQuoteFor(root);
+    if (domState === 'protected' && (reason === 'visual' || reason === 'metadata' || reason === 'group')) applyQuoteFor(root);
     return;
   }
   const token = ++operationId;
@@ -1511,11 +1641,12 @@ function setProtection(config) {
     replaceText: config?.replaceText === true,
     blockLike: config?.blockLike === true,
     sacredArt: config?.sacredArt === true,
+    groupMedia: config?.groupMedia === true,
     sensitivity: config?.model?.sensitivity || 'balanced',
   };
   const nextMode = modelEnabled ? 'full' : labeledEnabled ? 'labeled' : 'off';
   document.documentElement.toggleAttribute('data-tabcloser-block-like', nextSettings.blockLike && nextMode !== 'off');
-  const key = JSON.stringify([nextMode, nextSettings.sensitivity, nextSettings.replaceText, nextSettings.blockLike]);
+  const key = JSON.stringify([nextMode, nextSettings.sensitivity, nextSettings.replaceText, nextSettings.blockLike, nextSettings.groupMedia]);
   if (key === protectionKey) {
     // Presentation (sacred art) and profile settings never invalidate verdicts.
     const artChanged = settings.sacredArt !== nextSettings.sacredArt;
@@ -1549,6 +1680,8 @@ function setProtection(config) {
   // Settings changes (notably sensitivity) invalidate earlier visual verdicts.
   visuallyProtectedTweetIds.clear();
   videoDecisionsByTweetId.clear();
+  groupTriggersByTweetId.clear();
+  heldRoots.clear();
   clearAllStates();
   if (mode !== 'off') discoverWithin(document);
   globalThis.TabCloserXInteractions?.refresh();
@@ -1641,7 +1774,7 @@ function blockPendingOrProtectedActivation(event) {
     : root.querySelector('[data-tabcloser-media-state="protected"]');
   if (stateRoot?.dataset.tabcloserMediaState !== 'protected') return;
   const reason = stateRoot.dataset.tabcloserMediaReason;
-  if (settings.sacredArt && (reason === 'visual' || reason === 'metadata' || reason === 'manual')) {
+  if (settings.sacredArt && (reason === 'visual' || reason === 'metadata' || reason === 'manual' || reason === 'group')) {
     const url = sacredArtUrlFor(stateRoot);
     if (url) openLightbox(url);
     return;

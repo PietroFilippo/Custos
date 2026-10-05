@@ -26,7 +26,7 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 >
 > **Adult websites.** Block about 937,000 known pornography domains from a list bundled with the add-on, and keep Google, Bing, DuckDuckGo, and Brave Search on SafeSearch. Matching happens on your device.
 >
-> **X (Twitter) protection.** Hide sensitive images, GIFs, videos, and link previews using X's own labels and an optional on-device classifier. Hidden media is blurred, or covered with a public-domain sacred painting. “Why hidden?” explains every decision.
+> **X (Twitter) protection.** Hide sensitive images, GIFs, videos, and link previews using X's own labels and an optional on-device classifier. Hidden media is blurred, or covered with a public-domain sacred painting, and one hidden item can hide the rest of the post. “Why hidden?” explains every decision.
 >
 > **Profile protection.** Blur the profile pictures and banners of accounts X marks as sensitive (or of everyone you don't follow), replace their names with an alias, and fold their replies.
 >

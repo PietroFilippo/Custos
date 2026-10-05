@@ -7,6 +7,7 @@ const $xSensitivityRadios = [...document.querySelectorAll('input[name="xSensitiv
 const $xSacredArt = document.getElementById('xSacredArt');
 const $xReplaceText = document.getElementById('xReplaceText');
 const $xBlockLike = document.getElementById('xBlockLike');
+const $xGroupMedia = document.getElementById('xGroupMedia');
 const $xReveal = document.getElementById('xRevealDailySec');
 const $xRevealPerPost = document.getElementById('xRevealPerPostSec');
 const $xRevealStatus = document.getElementById('xRevealStatus');
@@ -628,9 +629,11 @@ function renderXProtection() {
   $xSacredArt.checked = config.sacredArt === true;
   $xReplaceText.checked = config.replaceText === true;
   $xBlockLike.checked = config.blockLike === true;
+  $xGroupMedia.checked = config.groupMedia === true;
   // Protections, unlike presentation, cannot be switched off during a lock.
   $xReplaceText.disabled = (locks.labeled || locks.model) && $xReplaceText.checked;
   $xBlockLike.disabled = (locks.labeled || locks.model) && $xBlockLike.checked;
+  $xGroupMedia.disabled = (locks.labeled || locks.model) && $xGroupMedia.checked;
   renderReveals(config, locks);
   renderProfile(config, locks);
   renderManualHides(snapshot.xUserControls || { posts: [], media: [] });
@@ -692,6 +695,7 @@ for (const radio of $xSensitivityRadios) {
 $xSacredArt.addEventListener('change', () => saveXProtection({ sacredArt: $xSacredArt.checked }));
 $xReplaceText.addEventListener('change', () => saveXProtection({ replaceText: $xReplaceText.checked }));
 $xBlockLike.addEventListener('change', () => saveXProtection({ blockLike: $xBlockLike.checked }));
+$xGroupMedia.addEventListener('change', () => saveXProtection({ groupMedia: $xGroupMedia.checked }));
 
 // === Temporary reveals ===
 function renderReveals(config, locks) {
