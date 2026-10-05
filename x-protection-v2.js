@@ -27,6 +27,7 @@ const videoDecisionsByTweetId = new Map();
 const verifiedSafeMediaKeys = new Set();
 const warningPattern = /(?:sensitive content|content warning|warning\s*:\s*(?:nudity|adult content)|may contain sensitive|potentially sensitive)/i;
 const maxDirectVideoEntries = 500;
+const maxSensitiveLabels = 5000;
 // Link-preview images are media cells too (never the whole card, whose text
 // and link must stay untouched).
 const mediaSelector = '[data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"], ' +
@@ -87,13 +88,20 @@ function nativeWarningRootFor(node) {
   return warningPattern.test(link.textContent || '') ? link : null;
 }
 
+// Checked for every status link during discovery; parse the URL once per page.
+let mediaSearchHref = null;
+let mediaSearchPage = false;
 function isMediaSearchPage() {
-  try {
-    const page = new URL(location.href);
-    return page.pathname === '/search' && page.searchParams.get('f') === 'media';
-  } catch {
-    return false;
+  if (location.href !== mediaSearchHref) {
+    mediaSearchHref = location.href;
+    try {
+      const page = new URL(location.href);
+      mediaSearchPage = page.pathname === '/search' && page.searchParams.get('f') === 'media';
+    } catch {
+      mediaSearchPage = false;
+    }
   }
+  return mediaSearchPage;
 }
 
 function searchMediaRootFor(node) {
@@ -238,9 +246,11 @@ function overlayFor(root) {
   return [...overlayHostFor(root).children].find(child => child.classList?.contains('tabcloser-media-overlay')) || null;
 }
 
+// getComputedStyle forces a style recalculation of the page, so each host is
+// measured once when it first gets a cover, not on every redraw.
 function activateOverlayHost(host) {
+  if (host.classList.contains('tabcloser-overlay-host')) return;
   host.classList.add('tabcloser-overlay-host');
-  host.classList.remove('tabcloser-overlay-host-static');
   const position = getComputedStyle(host).position;
   if (!position || position === 'static') host.classList.add('tabcloser-overlay-host-static');
 }
@@ -252,8 +262,16 @@ function clearOverlayHost(host) {
 // CSS blur radii are absolute: a radius that erases a timeline thumbnail
 // leaves silhouettes readable in the full-screen viewer. The stylesheet
 // scales the blur from each hidden cell's shorter side.
+// Only protected media is tracked. X removes posts while scrolling; a
+// removed element reports a final zero size and is released here, so the
+// observer never keeps detached posts (and their images) alive.
 const blurSizeObserver = typeof ResizeObserver === 'function'
-  ? new ResizeObserver(entries => { for (const entry of entries) setBlurSize(entry.target, entry.contentRect); })
+  ? new ResizeObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.target.isConnected) blurSizeObserver.unobserve(entry.target);
+      else setBlurSize(entry.target, entry.contentRect);
+    }
+  })
   : null;
 
 function setBlurSize(root, rect) {
@@ -557,7 +575,8 @@ function setRootState(root, state, reason) {
     return;
   }
   activateOverlayHost(host);
-  trackBlurSize(root);
+  if (state === 'protected') trackBlurSize(root);
+  else untrackBlurSize(root);
   const overlay = existing || document.createElement('div');
   // Pending media shows through heavily blurred behind a transparent click
   // shield. The notice (and the optional painting) is reserved for confirmed
@@ -1426,6 +1445,10 @@ function addSensitiveMetadata(metadata) {
     if (normalized) sensitiveUrls.add(normalized);
   }
   for (const tweetId of metadata?.tweetIds || []) sensitiveTweetIds.add(String(tweetId));
+  // Long sessions keep receiving labels; keep the newest few thousand.
+  for (const labels of [sensitiveUrls, sensitiveTweetIds]) {
+    while (labels.size > maxSensitiveLabels) labels.delete(labels.values().next().value);
+  }
   requeueSafeRootsForDirectVideoSources(directVideoTweetIds);
   const scan = mode !== 'off'
     ? scanKnownRootsForMetadata()

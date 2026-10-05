@@ -9,15 +9,26 @@
   const maxAccounts = 5000;
   const handlePattern = /^[A-Za-z0-9_]{1,15}$/;
   const nameContainerSelector = '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="UserCell"], [data-testid="HoverCard"]';
-  // X paints pictures twice: an accessible <img> and a background-image div.
-  const imageTargets = ' :is(img, [style*="background-image"])';
-  const allAvatars = ['[data-testid^="UserAvatar-Container-"]' + imageTargets, 'img[src*="/profile_images/"]', '[style*="/profile_images/"]'];
-  const allBanners = ['a[href$="/header_photo"]' + imageTargets, 'img[src*="/profile_banners/"]', '[style*="/profile_banners/"]'];
-  const avatarBlur = 'filter: blur(var(--tabcloser-avatar-blur, 6px)) saturate(0.6) !important;';
-  const bannerBlur = 'filter: blur(36px) saturate(0.6) brightness(0.7) !important;';
+  // Rules target the avatar container and banner link themselves: the style
+  // engine matches those by attribute, whereas a descendant or [style*=]
+  // pattern would be re-checked against nearly every element X restyles while
+  // scrolling. clip-path keeps the blur from spilling past the edges.
+  const allAvatars = ['[data-testid^="UserAvatar-Container-"]', 'img[src*="/profile_images/"]'];
+  const allBanners = ['a[href$="/header_photo"]', 'img[src*="/profile_banners/"]'];
+  const avatarBlur = 'filter: blur(var(--tabcloser-avatar-blur, 6px)) saturate(0.6) !important; clip-path: inset(0 round 9999px) !important;';
+  const bannerBlur = 'filter: blur(36px) saturate(0.6) brightness(0.7) !important; clip-path: inset(0) !important;';
   const accounts = new Map();
   const style = document.createElement('style');
   style.id = 'tabcloser-profile-style';
+  // Every element Custos changed, so cleanup never has to search the page.
+  const marked = new Set();
+  // Elements X added since the last refresh; only these are scanned unless a
+  // full pass is due (settings, flagged accounts, or the page changed).
+  const pendingScan = new Set();
+  let flaggedHandles = new Set();
+  let fullScan = true;
+  let scannedPath = '';
+  let titleChanged = false;
   let config = normalize(null);
   let refreshTimer = null;
   let styledOwnHandle;
@@ -51,15 +62,15 @@
   }
 
   function avatarSelectors(account) {
-    const list = ['[data-testid="UserAvatar-Container-' + account.handle + '" i]' + imageTargets];
-    if (account.avatarKey) list.push('img[src*="' + account.avatarKey + '"]', '[style*="' + account.avatarKey + '"]');
+    const list = ['[data-testid="UserAvatar-Container-' + account.handle + '" i]'];
+    if (account.avatarKey) list.push('img[src*="' + account.avatarKey + '"]');
     return list;
   }
 
   function bannerSelectors(account) {
-    const list = ['a[href="/' + account.handle + '/header_photo" i]' + imageTargets];
+    const list = ['a[href="/' + account.handle + '/header_photo" i]'];
     const key = account.bannerKey || (account.id ? '/profile_banners/' + account.id + '/' : null);
-    if (key) list.push('img[src*="' + key + '"]', '[style*="' + key + '"]');
+    if (key) list.push('img[src*="' + key + '"]');
     return list;
   }
 
@@ -80,15 +91,41 @@
         rules.push(all.join(',\n') + ' { ' + blur + ' }');
         const exempt = known.filter(account => account.following === true && !flagged(account));
         if (styledOwnHandle) exempt.push(accountFor(styledOwnHandle) || { handle: styledOwnHandle });
-        if (exempt.length) rules.push(exempt.flatMap(selectorsFor).join(',\n') + ' { filter: none !important; }');
+        if (exempt.length) rules.push(exempt.flatMap(selectorsFor).join(',\n') + ' { filter: none !important; clip-path: none !important; }');
       } else {
         const targets = known.filter(account => flagged(account) && account.handle !== styledOwnHandle);
         if (targets.length) rules.push(targets.flatMap(selectorsFor).join(',\n') + ' { ' + blur + ' }');
       }
     }
-    if (kinds.some(([all]) => all === allBanners)) rules.push('a[href$="/header_photo"] { overflow: hidden !important; }');
-    style.textContent = rules.join('\n');
+    // Replacing a stylesheet restyles all of X; only do it when rules changed.
+    const css = rules.join('\n');
+    if (style.textContent !== css) style.textContent = css;
     if (!style.isConnected) (document.head || document.documentElement).appendChild(style);
+  }
+
+  function updateFlaggedHandles() {
+    const next = new Set([...accounts.values()].filter(flagged).map(account => account.handle));
+    const changed = next.size !== flaggedHandles.size || [...next].some(handle => !flaggedHandles.has(handle));
+    flaggedHandles = next;
+    if (changed) fullScan = true;
+    return changed;
+  }
+
+  // Elements inside a scan target, plus the target itself and its closest
+  // match (X often re-renders just a piece of a name or post).
+  function within(target, selector) {
+    const found = new Set(target.querySelectorAll ? target.querySelectorAll(selector) : []);
+    if (target instanceof Element) {
+      if (target.matches(selector)) found.add(target);
+      const ancestor = target.parentElement?.closest(selector);
+      if (ancestor) found.add(ancestor);
+    }
+    return found;
+  }
+
+  function outermost(nodes) {
+    const connected = [...nodes].filter(node => node.isConnected);
+    return connected.filter(node => !connected.some(other => other !== node && other.contains(node)));
   }
 
   function handleWithin(container) {
@@ -135,11 +172,14 @@
     target.dataset.tabcloserAliasFor = handle;
     target.classList.add('tabcloser-name-hidden');
     target.insertAdjacentElement('beforebegin', alias);
+    marked.add(alias);
+    marked.add(target);
   }
 
   function hideFor(element, className, handle) {
     element.classList.add(className);
     element.dataset.tabcloserAliasFor = handle;
+    marked.add(element);
   }
 
   function restoreName(name) {
@@ -147,59 +187,87 @@
     delete name.dataset.tabcloserAliasFor;
   }
 
-  function applyNames() {
-    // Drop aliases whose name element React replaced or that no longer apply.
-    for (const alias of document.querySelectorAll('.tabcloser-alias')) {
-      const name = alias.nextElementSibling;
-      const handle = name?.dataset.tabcloserAliasFor;
-      if (!name?.classList.contains('tabcloser-name-hidden') || !config.names || !flaggedHandle(handle)) {
-        alias.remove();
-        if (name?.classList.contains('tabcloser-name-hidden')) restoreName(name);
-      } else if (alias.textContent !== aliasFor(handle)) {
-        alias.textContent = aliasFor(handle);
-      }
-    }
-    for (const name of document.querySelectorAll('.tabcloser-name-hidden')) {
-      if (!name.previousElementSibling?.classList.contains('tabcloser-alias')) restoreName(name);
-    }
-    for (const node of document.querySelectorAll('.tabcloser-handle-hidden, .tabcloser-bio-hidden')) {
-      if (config.names && flaggedHandle(node.dataset.tabcloserAliasFor)) continue;
-      if (node.previousElementSibling?.classList.contains('tabcloser-bio-notice')) node.previousElementSibling.remove();
-      node.classList.remove('tabcloser-handle-hidden', 'tabcloser-bio-hidden');
-      delete node.dataset.tabcloserAliasFor;
-    }
-    if (config.names) {
-      for (const container of document.querySelectorAll(nameContainerSelector)) {
-        if (extensionOwnedElement(container)) continue;
-        const handle = handleWithin(container);
-        if (!flaggedHandle(handle)) continue;
-        const name = nameElement(container);
-        if (name && !name.classList.contains('tabcloser-name-hidden')) showAlias(name, handle);
-        // Handles of adult accounts are often explicit too, so they go as well.
-        for (const node of container.querySelectorAll('div[dir], span')) {
-          if (!node.closest('.tabcloser-handle-hidden, .tabcloser-alias') && textOf(node).toLowerCase() === '@' + handle) {
-            hideFor(node, 'tabcloser-handle-hidden', handle);
-          }
+  function nameApplies(handle) {
+    return config.names && flaggedHandles.has(handle);
+  }
+
+  function collapseApplies(article, handle) {
+    const pageStatusId = statusIdFromHref(location.pathname);
+    return config.collapse && !!pageStatusId && flaggedHandles.has(handle) && statusIdFor(article) !== pageStatusId;
+  }
+
+  function uncollapse(article) {
+    article.removeAttribute('data-tabcloser-collapsed');
+    [...article.children].find(child => child.classList.contains('tabcloser-collapsed-reply'))?.remove();
+  }
+
+  // Undoes anything that no longer applies, walking only Custos's own marks.
+  function cleanup() {
+    for (const node of [...marked]) {
+      if (!node.isConnected) { marked.delete(node); continue; }
+      const handle = node.dataset.tabcloserAliasFor || node.getAttribute('data-tabcloser-collapsed');
+      if (node.classList.contains('tabcloser-alias')) {
+        const name = node.nextElementSibling;
+        const nameHandle = name?.dataset.tabcloserAliasFor;
+        if (!name?.classList.contains('tabcloser-name-hidden') || !nameApplies(nameHandle)) {
+          node.remove();
+          marked.delete(node);
+        } else if (node.textContent !== aliasFor(nameHandle)) {
+          node.textContent = aliasFor(nameHandle);
+        }
+      } else if (node.classList.contains('tabcloser-name-hidden')) {
+        if (!node.previousElementSibling?.classList.contains('tabcloser-alias') || !nameApplies(handle)) {
+          restoreName(node);
+          marked.delete(node);
+        }
+      } else if (node.matches('.tabcloser-handle-hidden, .tabcloser-bio-hidden')) {
+        if (!nameApplies(handle)) {
+          if (node.previousElementSibling?.classList.contains('tabcloser-bio-notice')) node.previousElementSibling.remove();
+          node.classList.remove('tabcloser-handle-hidden', 'tabcloser-bio-hidden');
+          delete node.dataset.tabcloserAliasFor;
+          marked.delete(node);
+        }
+      } else if (node.hasAttribute('data-tabcloser-collapsed')) {
+        if (!collapseApplies(node, handle)) {
+          uncollapse(node);
+          marked.delete(node);
         }
       }
-      // Mentions and "Replying to @handle" links read as the alias.
-      for (const link of document.querySelectorAll('a[href^="/"]')) {
-        if (link.classList.contains('tabcloser-name-hidden') || link.closest(nameContainerSelector + ', .tabcloser-controls')) continue;
-        const handle = (link.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]{1,15})$/)?.[1].toLowerCase();
-        if (flaggedHandle(handle) && textOf(link).toLowerCase() === '@' + handle) showAlias(link, handle);
-      }
-      applyProfilePage();
     }
-    applyTitle();
+  }
+
+  function applyNamesWithin(target) {
+    for (const container of within(target, nameContainerSelector)) {
+      if (extensionOwnedElement(container)) continue;
+      const handle = handleWithin(container);
+      if (!nameApplies(handle)) continue;
+      const name = nameElement(container);
+      if (name && !name.classList.contains('tabcloser-name-hidden')) showAlias(name, handle);
+      // Handles of adult accounts are often explicit too, so they go as well.
+      for (const node of container.querySelectorAll('div[dir], span')) {
+        if (!node.closest('.tabcloser-handle-hidden, .tabcloser-alias') && textOf(node).toLowerCase() === '@' + handle) {
+          hideFor(node, 'tabcloser-handle-hidden', handle);
+        }
+      }
+    }
+    // Mentions and "Replying to @handle" links read as the alias.
+    for (const link of within(target, 'a[href^="/"]')) {
+      if (link.classList.contains('tabcloser-name-hidden') || link.closest(nameContainerSelector + ', .tabcloser-controls')) continue;
+      const handle = (link.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]{1,15})$/)?.[1].toLowerCase();
+      if (nameApplies(handle) && textOf(link).toLowerCase() === '@' + handle) showAlias(link, handle);
+    }
   }
 
   // On a flagged profile: the sticky top bar repeats the display name, and
-  // the bio and website are often the most explicit text on the page.
+  // the bio and website are often the most explicit text on the page. Only
+  // flagged profile pages pay for this, so it may look at the whole page.
   function applyProfilePage() {
     const pageHandle = profileHandle();
-    if (flaggedHandle(pageHandle)) {
-      const names = new Set([...document.querySelectorAll('.tabcloser-name-hidden')]
-        .filter(node => node.dataset.tabcloserAliasFor === pageHandle && !node.matches('a')).map(textOf).filter(Boolean));
+    const hoverCards = document.querySelectorAll('[data-testid="HoverCard"]');
+    if (!nameApplies(pageHandle) && !hoverCards.length) return;
+    if (nameApplies(pageHandle)) {
+      const names = new Set([...marked].filter(node => node.classList.contains('tabcloser-name-hidden') &&
+        node.dataset.tabcloserAliasFor === pageHandle && !node.matches('a')).map(textOf).filter(Boolean));
       for (const heading of document.querySelectorAll('h2[role="heading"]')) {
         const child = heading.children.length === 1 ? heading.firstElementChild : null;
         if (child && !heading.closest(nameContainerSelector) && names.has(textOf(child))) showAlias(child, pageHandle);
@@ -208,7 +276,7 @@
     for (const bio of document.querySelectorAll('[data-testid="UserDescription"], [data-testid="UserUrl"]')) {
       const card = bio.closest('[data-testid="HoverCard"]');
       const owner = card ? handleWithin(card) : pageHandle;
-      if (bio.classList.contains('tabcloser-bio-hidden') || !flaggedHandle(owner)) continue;
+      if (bio.classList.contains('tabcloser-bio-hidden') || !nameApplies(owner)) continue;
       hideFor(bio, 'tabcloser-bio-hidden', owner);
       if (bio.matches('[data-testid="UserDescription"]')) {
         const notice = document.createElement('div');
@@ -265,27 +333,38 @@
 
   // Replies on a conversation page fold into one line; the focal post and
   // every post outside conversations stay as X shows them.
-  function applyCollapse() {
-    const pageStatusId = statusIdFromHref(location.pathname);
-    for (const article of document.querySelectorAll('article')) {
+  function applyCollapseWithin(target) {
+    if (!statusIdFromHref(location.pathname)) return;
+    for (const article of within(target, 'article')) {
+      if (article.hasAttribute('data-tabcloser-collapsed')) continue;
       const handle = authorHandle(article);
-      const notice = [...article.children].find(child => child.classList.contains('tabcloser-collapsed-reply'));
-      const collapse = config.collapse && !!pageStatusId && flaggedHandle(handle) && statusIdFor(article) !== pageStatusId;
-      if (!collapse) {
-        article.removeAttribute('data-tabcloser-collapsed');
-        notice?.remove();
-        continue;
-      }
+      if (!collapseApplies(article, handle)) continue;
       article.setAttribute('data-tabcloser-collapsed', handle);
-      if (!notice) article.prepend(collapsedNotice(article, handle));
+      article.prepend(collapsedNotice(article, handle));
+      marked.add(article);
     }
   }
 
   function refresh() {
     refreshTimer = null;
-    if (config.images !== 'off' && ownHandle() !== styledOwnHandle) buildStyle();
-    applyNames();
-    applyCollapse();
+    if (config.images !== 'off' && !styledOwnHandle && ownHandle()) buildStyle();
+    const full = fullScan || location.pathname !== scannedPath;
+    const targets = full ? [document] : outermost(pendingScan);
+    fullScan = false;
+    scannedPath = location.pathname;
+    pendingScan.clear();
+    if (marked.size) cleanup();
+    // Names and collapse only ever apply to flagged accounts: with none seen,
+    // there is nothing to scan.
+    if (flaggedHandles.size && (config.names || config.collapse)) {
+      for (const target of targets) {
+        if (config.names) applyNamesWithin(target);
+        if (config.collapse) applyCollapseWithin(target);
+      }
+      if (config.names) applyProfilePage();
+    }
+    if (full || titleChanged) applyTitle();
+    titleChanged = false;
   }
 
   function schedule() {
@@ -321,21 +400,30 @@
   browser.runtime.onMessage.addListener(message => {
     if (message?.type === 'xProtectionChanged') {
       config = normalize(message.xProtection?.profile);
+      updateFlaggedHandles();
+      fullScan = true;
       buildStyle();
       refresh();
     }
     if (message?.type === 'xSensitiveMediaMetadata' && Array.isArray(message.metadata?.accounts) && message.metadata.accounts.length) {
       for (const account of message.metadata.accounts) remember(account);
       buildStyle();
-      schedule();
+      // A newly flagged account may already be on screen: rescan once.
+      if (updateFlaggedHandles()) schedule();
     }
   });
 
   new MutationObserver(mutations => {
-    const working = config.names || config.collapse || (config.images !== 'off' && !styledOwnHandle) ||
-      document.querySelector('.tabcloser-alias, [data-tabcloser-collapsed]');
-    if (!working || !mutations.some(mutation => !extensionOwnedElement(mutation.target))) return;
-    schedule();
+    const names = (config.names || config.collapse) && (flaggedHandles.size || marked.size);
+    const ownPending = config.images !== 'off' && !styledOwnHandle;
+    if (!names && !ownPending) return;
+    for (const mutation of mutations) {
+      if (mutation.target.nodeName === 'TITLE') { titleChanged = true; continue; }
+      for (const node of mutation.addedNodes) {
+        if (node instanceof Element && !extensionOwnedElement(node)) pendingScan.add(node);
+      }
+    }
+    if (pendingScan.size || titleChanged) schedule();
   }).observe(document.documentElement, { childList: true, subtree: true });
 
   globalThis.TabCloserXProfile = {
@@ -344,6 +432,6 @@
   };
 
   browser.storage.local.get('xProtection')
-    .then(data => { config = normalize(data.xProtection?.profile); buildStyle(); refresh(); })
+    .then(data => { config = normalize(data.xProtection?.profile); updateFlaggedHandles(); buildStyle(); refresh(); })
     .catch(() => buildStyle());
 })();

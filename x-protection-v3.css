@@ -41,15 +41,15 @@
 
 /* Checked-pending and protected media show through unrecognizably blurred
    instead of a flat box; the slight scale keeps sharp edges from leaking
-   past the blur. Protected media blurs harder and darker. The radius grows
-   with the cell's shorter side (--tabcloser-media-side, set by the
-   coordinator) so a full-screen photo is as unreadable as a thumbnail. Each
-   rule repeats a fixed-radius filter first: if an engine rejected the scaled
-   value, the fixed blur would still apply instead of no blur at all. */
+   past the blur. Pending media (briefly, while checked) uses a fixed radius.
+   Protected media blurs harder and darker, and its radius grows with the
+   cell's shorter side (--tabcloser-media-side, set by the coordinator) so a
+   full-screen photo is as unreadable as a thumbnail. That rule repeats a
+   fixed-radius filter first: if an engine rejected the scaled value, the
+   fixed blur would still apply instead of no blur at all. */
 [data-tabcloser-media-state="pending"] > :not(.tabcloser-media-overlay) {
   visibility: visible !important;
   filter: blur(32px) saturate(0.8) !important;
-  filter: blur(max(32px, calc(var(--tabcloser-media-side, 0px) * 0.08))) saturate(0.8) !important;
   transform: scale(1.15) !important;
 }
 
@@ -343,7 +343,7 @@ article[data-tabcloser-collapse-revealed] > .tabcloser-collapsed-reply {
    button: the notice keeps only its mark and "Why hidden?" becomes "?". The
    overlay's own size decides, and both keep their accessible text. Kept last
    and one class more specific so it wins over the regular notice and button. */
-.tabcloser-media-overlay {
+.tabcloser-media-overlay:not(.tabcloser-media-overlay-pending) {
   container: tabcloser-cell / size;
 }
 @container tabcloser-cell (max-width: 200px) {

@@ -239,8 +239,31 @@
     if (previous) send({ type: 'xControlRevealEnd', token: previous.token, postId: previous.postId })
       .catch(() => {}).finally(() => { if (panelRoot) updateAllowance(panelRoot); });
   }
+  // Elements X added since the last refresh. A full refresh (new choices,
+  // settings change) scans the document; otherwise only these are scanned.
+  const pendingScan = new Set();
+  let fullScan = true;
+  function scanTargets() {
+    if (fullScan) return [document];
+    const connected = [...pendingScan].filter(node => node.isConnected);
+    return connected.filter(node => !connected.some(other => other !== node && other.contains(node)));
+  }
+  function textsWithin(target) {
+    const found = new Set(target.querySelectorAll ? target.querySelectorAll('[data-testid="tweetText"]') : []);
+    const own = target instanceof Element ? target.closest('[data-testid="tweetText"]') : null;
+    if (own) found.add(own);
+    return found;
+  }
   function refresh() {
+    fullScan = true;
+    runRefresh();
+  }
+  function runRefresh() {
     refreshTimer = null;
+    const targets = scanTargets();
+    const full = fullScan;
+    fullScan = false;
+    pendingScan.clear();
     for (const [text, notice] of manualTexts) {
       if (!text.isConnected || !textHidden(text)) {
         notice.remove(); manualTexts.delete(text);
@@ -249,7 +272,7 @@
       }
     }
     if (posts.size || texts.size) {
-      for (const text of document.querySelectorAll('[data-testid="tweetText"]')) {
+      for (const text of targets.flatMap(target => [...textsWithin(target)])) {
         if (!textHidden(text)) continue;
         text.dataset.tabcloserManualText = '';
         text.classList.add('tabcloser-hidden-text');
@@ -275,14 +298,16 @@
       }
     }
     if (posts.size || media.size) {
-      const roots = new Set(candidateRootsWithin(document));
+      const roots = new Set(targets.flatMap(target => candidateRootsWithin(target)));
       for (const root of roots) {
         if (!manuallyHidden(root)) continue;
         manualRoots.add(root);
         if (root.dataset.tabcloserMediaReason !== 'manual' || !overlayFor(root)) setRootState(root, 'protected', 'manual');
       }
     }
-    document.querySelectorAll('[data-tabcloser-media-state="protected"]').forEach(root => decorate(root, 'protected'));
+    // The coordinator decorates covers as it draws them; a full pass is only
+    // a safety net for covers drawn before this script was ready.
+    if (full) document.querySelectorAll('[data-tabcloser-media-state="protected"]').forEach(root => decorate(root, 'protected'));
     if (lease) {
       if (!panelRoot?.isConnected || revealPage !== location.href) stopReveal();
       else paintReveal();
@@ -323,9 +348,18 @@
   });
   new MutationObserver(mutations => {
     if (!posts.size && !texts.size && !media.size && !lease) return;
-    if (!mutations.some(mutation => !extensionOwnedElement(mutation.target))) return;
+    let relevant = false;
+    for (const mutation of mutations) {
+      if (extensionOwnedElement(mutation.target)) continue;
+      relevant = true;
+      // A changed src/href can change a media identity; added nodes may be
+      // new posts. Text-only churn (counters, times) needs no scan.
+      if (mutation.type === 'attributes') pendingScan.add(mutation.target);
+      else for (const node of mutation.addedNodes) if (node instanceof Element && !extensionOwnedElement(node)) pendingScan.add(node);
+    }
+    if (!relevant) return;
     if (lease && (!panelRoot?.isConnected || statusIdFor(panelRoot) !== lease.postId || revealPage !== location.href)) stopReveal();
-    if (refreshTimer == null) refreshTimer = setTimeout(refresh, 50);
+    if (refreshTimer == null && (pendingScan.size || lease)) refreshTimer = setTimeout(runRefresh, 50);
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'poster', 'href'] });
   globalThis.TabCloserXInteractions = { manuallyHidden, decorate, refresh, stopReveal, openPanel };
   send({ type: 'xControlGet' }).then(result => { if (result?.ok) applySnapshot(result); else refresh(); }).catch(() => refresh());

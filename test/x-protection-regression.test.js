@@ -113,7 +113,7 @@ test('blur is the default cover, scales with the cell, and keeps a fixed-radius 
   const background = readFileSync(path.join(root, 'background.js'), 'utf8');
   assert.match(background, /sacredArt: raw\.sacredArt === true/, 'sacred art is opt-in');
   assert.match(coordinator, /tabcloser-media-overlay-blur/);
-  for (const state of ['pending', 'protected']) {
+  for (const state of ['protected']) {
     const selector = '[data-tabcloser-media-state="' + state + '"] > :not(.tabcloser-media-overlay) {';
     const from = stylesheet.indexOf(selector);
     const rule = from < 0 ? '' : stylesheet.slice(from, stylesheet.indexOf('}', from));
