@@ -71,7 +71,9 @@
     clearInterval(allowanceTimer); allowanceTimer = null;
     const previousRoot = panelRoot;
     panel?.remove(); panel = null; panelRoot = null; holdButton = null; allowanceText = null; meter = null;
-    (manualTexts.get(previousRoot) || overlayFor(previousRoot || document.documentElement))?.querySelector('button')?.focus();
+    // Return keyboard focus to the control that opened the panel without
+    // scrolling the page back to it: the reader may have moved on.
+    (manualTexts.get(previousRoot) || overlayFor(previousRoot || document.documentElement))?.querySelector('button')?.focus({ preventScroll: true });
   }
   function panelSection(...children) {
     const section = document.createElement('div');
@@ -100,8 +102,9 @@
     const label = kind ? paragraph(kind, 'tabcloser-kind') : null;
     panel.append(head, panelSection(...[label, paragraph(text)].filter(Boolean)));
     document.documentElement.appendChild(panel);
-    panel.querySelector('button').focus();
+    panel.querySelector('button').focus({ preventScroll: true });
   }
+  const perPostSec = source => source?.revealPerPostSec || (source?.postLimitMs ? source.postLimitMs / 1000 : 3);
   function renderAllowance(result, root) {
     const available = Math.floor(Math.min(result.dailyMs || 0, result.postMs || 0));
     allowanceText.textContent = result.revealDailySec <= 0
@@ -109,9 +112,9 @@
       : result.dailyMs < 1
         ? 'Daily allowance used up. Reveals return at local midnight.'
         : result.postMs < 1
-          ? 'This post has used its three seconds today. It can be revealed again after local midnight.'
+          ? 'This post has used its ' + perPostSec(result) + ' seconds today. It can be revealed again after local midnight.'
           : seconds(available) + ' s left for this post · ' + seconds(result.dailyMs) + ' s left today · resets at local midnight';
-    meter.style.width = (result.revealDailySec > 0 ? Math.min(100, (available / 3000) * 100) : 0) + '%';
+    meter.style.width = (result.revealDailySec > 0 ? Math.min(100, (available / (result.postLimitMs || 3000)) * 100) : 0) + '%';
     holdButton.disabled = !statusIdFor(root) || result.revealDailySec <= 0 || available < 1;
   }
   async function updateAllowance(root) {
@@ -126,7 +129,7 @@
     panelRoot = root;
     const heading = document.createElement('h4');
     heading.textContent = 'Temporary reveal';
-    const details = paragraph('Hold the button to show this post’s hidden media and text for up to three seconds. Videos stay paused. Let go or leave this tab to hide it again.', 'tabcloser-control-note');
+    const details = paragraph('Hold the button to show this post’s hidden media and text for up to ' + perPostSec(snapshot) + ' seconds a day. Videos stay paused. Let go or leave this tab to hide it again.', 'tabcloser-control-note');
     const track = document.createElement('div');
     track.className = 'tabcloser-meter';
     track.setAttribute('aria-hidden', 'true');
@@ -141,7 +144,7 @@
     holdButton.addEventListener('pointerdown', event => {
       if (event.button !== 0) return;
       event.preventDefault();
-      holdButton.focus();
+      holdButton.focus({ preventScroll: true });
       startReveal(root);
     });
     holdButton.addEventListener('pointerleave', stopReveal);

@@ -139,7 +139,7 @@
         <div class="group" id="x-reveals">
           <div class="group-head">
             <h3>Temporary reveals</h3>
-            <p class="help">Inside “Why hidden?”, hold the button to show a post briefly. Each post gets at most 3 seconds a day, shared across its images and all tabs. Letting go, switching tab, or leaving the page hides it again. Videos stay paused.</p>
+            <p class="help">Inside “Why hidden?”, hold the button to show a post briefly. Each post gets a few seconds a day, shared across its images and all tabs. Letting go, switching tab, or leaving the page hides it again. Videos stay paused.</p>
           </div>
           <div class="reveal-field">
             <label for="xRevealDailySec">Daily allowance</label>
@@ -147,6 +147,14 @@
             <span>seconds per day</span>
             <button id="saveXReveal" class="btn btn-sm" type="button">Save</button>
             <span class="status-line">0 turns reveals off</span>
+          </div>
+          <div class="reveal-field">
+            <label for="xRevealPerPostSec">Each post, at most</label>
+            <select id="xRevealPerPostSec" class="input">
+              <option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option>
+              <option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option>
+            </select>
+            <span>seconds per day</span>
           </div>
           <p id="xRevealFeedback" class="inline-feedback" role="status"></p>
           <p id="xRevealStatus" class="status-line reveal-status"></p>

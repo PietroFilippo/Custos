@@ -151,6 +151,8 @@ body {
 .reveal-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
 .reveal-field .input-num { width: 72px; }
 .reveal-status { margin-top: 8px; }
+.reveal-field + .reveal-field { margin-top: 10px; }
+.reveal-field select.input { padding: 5px 8px; }
 .alias-choices { width: 100%; padding-left: 46px; margin-top: 4px; display: grid; gap: 8px; }
 .alias-sample { font-weight: 650; color: var(--text); white-space: nowrap; }
 #x-profile .segmented { margin-bottom: 4px; }
