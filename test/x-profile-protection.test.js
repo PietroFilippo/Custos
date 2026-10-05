@@ -100,12 +100,15 @@ test('display names of flagged accounts get one stable virtue alias and come bac
     assert.equal(cellAlias.textContent, replyAlias.textContent, 'the same account keeps the same alias everywhere');
     assert.ok(replyAlias.nextElementSibling.classList.contains('tabcloser-name-hidden'));
     assert.equal(h.document.querySelector('#friend-reply .tabcloser-alias'), null, 'unflagged accounts keep their names');
-    assert.match(h.document.querySelector('#reply [data-testid="User-Name"]').textContent, /@Spicy_One/, 'the handle stays visible');
+    const handle = [...h.document.querySelectorAll('#reply [data-testid="User-Name"] div[dir]')].find(node => node.textContent === '@Spicy_One');
+    assert.ok(handle.classList.contains('tabcloser-handle-hidden'), 'explicit handles are hidden too');
+    assert.ok([...h.document.querySelectorAll('#friend-reply [data-testid="User-Name"] div[dir]')].every(node => !node.classList.contains('tabcloser-handle-hidden')));
     await h.send({ type: 'xProtectionChanged', xProtection: { profile: { ...flaggedProfile, alias: 'plain' } } });
     assert.equal(h.document.querySelector('#reply .tabcloser-alias').textContent, 'Hidden account');
     await h.send({ type: 'xProtectionChanged', xProtection: { profile: { ...flaggedProfile, names: false } } });
     assert.equal(h.document.querySelector('.tabcloser-alias'), null);
     assert.equal(h.document.querySelector('.tabcloser-name-hidden'), null);
+    assert.equal(handle.classList.contains('tabcloser-handle-hidden'), false, 'the handle returns with the name');
   } finally { h.close(); }
 });
 
@@ -156,6 +159,39 @@ test('replies collapse only on conversation pages, and a flagged profile tab tit
     assert.equal(h.document.querySelector('[data-tabcloser-collapsed]'), null, 'timelines are not conversations');
     h.document.title = 'Spicy name (@Spicy_One) / X';
     await h.settle();
-    assert.match(h.document.title, /^[A-Z][a-z]+ ✝ \(@Spicy_One\) \/ X$/);
+    assert.match(h.document.title, /^[A-Z][a-z]+ ✝ \/ X$/, 'the tab title drops the name and the handle');
+  } finally { h.close(); }
+});
+
+test('a flagged profile page aliases its top bar and mentions, and hides the handle, bio, and website', async () => {
+  const html = `
+    <div data-testid="primaryColumn">
+      <h2 id="top-bar" role="heading"><span><span>Spicy name</span></span></h2><div>720 posts</div>
+      <div data-testid="UserName"><div><div dir="ltr"><span>Spicy name</span></div></div><div><div dir="ltr"><span>@Spicy_One</span></div></div></div>
+      <div id="bio" data-testid="UserDescription"><span>explicit bio</span></div>
+      <div data-testid="UserProfileHeader_Items"><a id="website" data-testid="UserUrl" href="https://t.co/x">example.test</a></div>
+      <article id="mentioning">${userName('friend', 'Friend', 300)}
+        <div>Replying to <a id="replying" href="/spicy_one">@spicy_one</a></div>
+        <div data-testid="tweetText">hello <a id="mention" href="/Spicy_One">@Spicy_One</a></div>
+      </article>
+    </div>`;
+  const h = await start(flaggedProfile, { url: 'https://x.com/Spicy_One', html });
+  try {
+    const bar = h.document.getElementById('top-bar');
+    assert.match(bar.querySelector('.tabcloser-alias').textContent, /^[A-Z][a-z]+ ✝$/);
+    assert.ok(bar.querySelector('.tabcloser-name-hidden'));
+    assert.ok(h.document.querySelector('[data-testid="UserName"] .tabcloser-handle-hidden'));
+    assert.ok(h.document.getElementById('bio').classList.contains('tabcloser-bio-hidden'));
+    assert.match(h.document.querySelector('.tabcloser-bio-notice').textContent, /Bio hidden/);
+    assert.ok(h.document.getElementById('website').classList.contains('tabcloser-bio-hidden'));
+    for (const id of ['mention', 'replying']) {
+      const link = h.document.getElementById(id);
+      assert.ok(link.classList.contains('tabcloser-name-hidden'), id + ' is replaced');
+      assert.match(link.previousElementSibling.textContent, /^[A-Z][a-z]+ ✝$/);
+    }
+    assert.equal(h.document.querySelector('#mentioning [data-testid="User-Name"] .tabcloser-alias'), null, 'the unflagged author keeps their name');
+    await h.send({ type: 'xProtectionChanged', xProtection: { profile: { ...flaggedProfile, names: false } } });
+    assert.equal(h.document.querySelector('.tabcloser-alias, .tabcloser-name-hidden, .tabcloser-handle-hidden, .tabcloser-bio-hidden, .tabcloser-bio-notice'), null,
+      'switching names off restores everything');
   } finally { h.close(); }
 });

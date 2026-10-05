@@ -103,15 +103,43 @@
     return null;
   }
 
-  // The display name is the first text block that is not the @handle. Emoji
-  // in names are images, so their alt text counts as text.
+  // Emoji in names are images, so their alt text counts as text.
+  const textOf = element => (element.textContent + [...element.querySelectorAll('img[alt]')].map(image => image.alt).join('')).trim();
+
+  // The display name is the first text block that is not the @handle.
   function nameElement(container) {
     for (const candidate of container.querySelectorAll('div[dir]')) {
       if (candidate.closest('.tabcloser-controls')) continue;
-      const text = (candidate.textContent + [...candidate.querySelectorAll('img[alt]')].map(image => image.alt).join('')).trim();
+      const text = textOf(candidate);
       if (text && !text.startsWith('@') && text !== '·') return candidate;
     }
     return null;
+  }
+
+  function profileHandle() {
+    const segment = location.pathname.split('/')[1] || '';
+    return handlePattern.test(segment) ? segment.toLowerCase() : null;
+  }
+
+  // Hides an element and puts the alias in its place, in X's own font (the
+  // inserted span would otherwise inherit the browser's default serif).
+  function showAlias(target, handle) {
+    const computed = getComputedStyle(target);
+    const alias = document.createElement('span');
+    alias.className = 'tabcloser-alias';
+    alias.title = 'Name hidden by Custos';
+    alias.textContent = aliasFor(handle);
+    for (const property of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'color']) {
+      alias.style[property] = computed[property];
+    }
+    target.dataset.tabcloserAliasFor = handle;
+    target.classList.add('tabcloser-name-hidden');
+    target.insertAdjacentElement('beforebegin', alias);
+  }
+
+  function hideFor(element, className, handle) {
+    element.classList.add(className);
+    element.dataset.tabcloserAliasFor = handle;
   }
 
   function restoreName(name) {
@@ -134,36 +162,68 @@
     for (const name of document.querySelectorAll('.tabcloser-name-hidden')) {
       if (!name.previousElementSibling?.classList.contains('tabcloser-alias')) restoreName(name);
     }
+    for (const node of document.querySelectorAll('.tabcloser-handle-hidden, .tabcloser-bio-hidden')) {
+      if (config.names && flaggedHandle(node.dataset.tabcloserAliasFor)) continue;
+      if (node.previousElementSibling?.classList.contains('tabcloser-bio-notice')) node.previousElementSibling.remove();
+      node.classList.remove('tabcloser-handle-hidden', 'tabcloser-bio-hidden');
+      delete node.dataset.tabcloserAliasFor;
+    }
     if (config.names) {
       for (const container of document.querySelectorAll(nameContainerSelector)) {
         if (extensionOwnedElement(container)) continue;
         const handle = handleWithin(container);
         if (!flaggedHandle(handle)) continue;
         const name = nameElement(container);
-        if (!name || name.classList.contains('tabcloser-name-hidden')) continue;
-        const computed = getComputedStyle(name);
-        const alias = document.createElement('span');
-        alias.className = 'tabcloser-alias';
-        alias.title = 'Name hidden by Custos';
-        alias.textContent = aliasFor(handle);
-        alias.style.fontSize = computed.fontSize;
-        alias.style.fontWeight = computed.fontWeight;
-        alias.style.lineHeight = computed.lineHeight;
-        alias.style.color = computed.color;
-        name.dataset.tabcloserAliasFor = handle;
-        name.classList.add('tabcloser-name-hidden');
-        name.insertAdjacentElement('beforebegin', alias);
+        if (name && !name.classList.contains('tabcloser-name-hidden')) showAlias(name, handle);
+        // Handles of adult accounts are often explicit too, so they go as well.
+        for (const node of container.querySelectorAll('div[dir], span')) {
+          if (!node.closest('.tabcloser-handle-hidden, .tabcloser-alias') && textOf(node).toLowerCase() === '@' + handle) {
+            hideFor(node, 'tabcloser-handle-hidden', handle);
+          }
+        }
       }
+      // Mentions and "Replying to @handle" links read as the alias.
+      for (const link of document.querySelectorAll('a[href^="/"]')) {
+        if (link.classList.contains('tabcloser-name-hidden') || link.closest(nameContainerSelector + ', .tabcloser-controls')) continue;
+        const handle = (link.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]{1,15})$/)?.[1].toLowerCase();
+        if (flaggedHandle(handle) && textOf(link).toLowerCase() === '@' + handle) showAlias(link, handle);
+      }
+      applyProfilePage();
     }
     applyTitle();
   }
 
-  // Profile tabs are titled "Name (@handle) / X".
+  // On a flagged profile: the sticky top bar repeats the display name, and
+  // the bio and website are often the most explicit text on the page.
+  function applyProfilePage() {
+    const pageHandle = profileHandle();
+    if (flaggedHandle(pageHandle)) {
+      const names = new Set([...document.querySelectorAll('.tabcloser-name-hidden')]
+        .filter(node => node.dataset.tabcloserAliasFor === pageHandle && !node.matches('a')).map(textOf).filter(Boolean));
+      for (const heading of document.querySelectorAll('h2[role="heading"]')) {
+        const child = heading.children.length === 1 ? heading.firstElementChild : null;
+        if (child && !heading.closest(nameContainerSelector) && names.has(textOf(child))) showAlias(child, pageHandle);
+      }
+    }
+    for (const bio of document.querySelectorAll('[data-testid="UserDescription"], [data-testid="UserUrl"]')) {
+      const card = bio.closest('[data-testid="HoverCard"]');
+      const owner = card ? handleWithin(card) : pageHandle;
+      if (bio.classList.contains('tabcloser-bio-hidden') || !flaggedHandle(owner)) continue;
+      hideFor(bio, 'tabcloser-bio-hidden', owner);
+      if (bio.matches('[data-testid="UserDescription"]')) {
+        const notice = document.createElement('div');
+        notice.className = 'tabcloser-controls tabcloser-bio-notice';
+        notice.textContent = 'Bio hidden by Custos';
+        bio.insertAdjacentElement('beforebegin', notice);
+      }
+    }
+  }
+
+  // Profile tabs are titled "Name (@handle) / X"; both parts are replaced.
   function applyTitle() {
     const match = document.title.match(/^(\(\d+\+?\) )?(.+) \(@([A-Za-z0-9_]{1,15})\) \/ X$/);
     if (!match || !config.names || !flaggedHandle(match[3])) return;
-    const alias = aliasFor(match[3]);
-    if (match[2] !== alias) document.title = (match[1] || '') + alias + ' (@' + match[3] + ') / X';
+    document.title = (match[1] || '') + aliasFor(match[3]) + ' / X';
   }
 
   function authorHandle(article) {

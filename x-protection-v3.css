@@ -195,6 +195,10 @@
 .tabcloser-hidden-text {
   display: none !important;
 }
+/* Fallback font stack: the inline font copied from X's own text wins. */
+.tabcloser-quote, .tabcloser-alias {
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
 .tabcloser-quote {
   color: inherit !important;
   font-style: italic !important;
@@ -293,7 +297,8 @@ html[data-tabcloser-block-like] article:has([data-tabcloser-media-state="protect
    by x-profile-protection.js; larger pictures get a stronger radius. */
 a[href$="/photo"] { --tabcloser-avatar-blur: 16px; }
 [aria-modal="true"] { --tabcloser-avatar-blur: 40px; }
-.tabcloser-name-hidden { display: none !important; }
+.tabcloser-name-hidden, .tabcloser-handle-hidden, .tabcloser-bio-hidden { display: none !important; }
+.tabcloser-bio-notice { color: var(--tabcloser-muted) !important; font-size: 14px !important; font-style: italic !important; margin: 8px 0 !important; }
 .tabcloser-alias { white-space: nowrap !important; }
 article[data-tabcloser-collapsed]:not([data-tabcloser-collapse-revealed]) > :not(.tabcloser-collapsed-reply),
 article[data-tabcloser-collapse-revealed] > .tabcloser-collapsed-reply {

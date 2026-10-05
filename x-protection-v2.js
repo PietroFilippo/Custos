@@ -454,6 +454,11 @@ function applyQuoteFor(root) {
   text.classList.add('tabcloser-hidden-text');
   const block = document.createElement('div');
   block.className = 'tabcloser-quote';
+  // X sets its font on the text element itself, not its container; without
+  // this the quote falls back to the browser's default serif.
+  const computed = getComputedStyle(text);
+  block.style.fontFamily = computed.fontFamily;
+  block.style.fontSize = computed.fontSize;
   block.textContent = '“' + quote.text + '”';
   const author = document.createElement('div');
   author.className = 'tabcloser-quote-author';
