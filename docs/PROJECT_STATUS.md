@@ -67,6 +67,10 @@ Regression tests replay these score patterns through the real coordinator. Unobs
 - No domains or media are sent to a classification/list service. Media pixels, scores, and account flags stay transient; manual choices, locks, and reveal usage stay in local extension storage. Only the maintainer update command downloads the upstream list.
 - The domain list cannot identify every adult page or newly created domain. SafeSearch covers four engines only. The settings lock does not prevent browser-level add-on disabling/removal or a user editing their own profile.
 
+## Release
+
+0.5.0 was submitted to addons.mozilla.org as a listed, Firefox-only add-on on 6 October 2026 (tag `v0.5.0`, commit `af0fd87`), with the source archive, listing text, and privacy policy (screenshots are added in the Developer Hub). It is waiting for Mozilla's review; after approval, smoke-test the AMO install and publish GitHub release notes (see the release checklist).
+
 ## Recommended next steps
 
 1. Smoke-test 0.5.0 in Zen against live X: verify account fields (following, avatar, banner) in real responses, aliases in posts/user cells/hover cards/profile headers, collapsed replies, the blur in the photo viewer, and link-preview cards. Adjust the fixtures to any real DOM differences.
