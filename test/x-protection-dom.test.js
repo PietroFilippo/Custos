@@ -2211,3 +2211,49 @@ test('when the photo that hid its post is marked not sensitive, the others are c
     assert.equal(state('photo-b').tabcloserMediaState, 'safe', 'the sibling is released after its own check');
   } finally { h.dom.window.close(); }
 });
+
+test('a video hidden by the classifier can be marked, is released once the mark takes effect, and is covered again on removal', async () => {
+  const posterUrl = 'https://pbs.twimg.com/amplify_video_thumb/400/img/poster.jpg';
+  const key = '400|' + posterUrl;
+  const source = 'https://video.twimg.com/amplify_video/400/vid/a.mp4';
+  const html = '<article><a href="/example/status/400"><time>1h</time></a><div data-testid="tweetText">Clip</div>' +
+    '<a href="/example/status/400/video/1"><div id="video-root" data-testid="videoComponent"><video poster="' + posterUrl + '" src="blob:https://x.com/v"></video></div></a></article>';
+  const messages = [];
+  const controls = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 2, safeMarksLeft: 2 };
+  const h = await startCoordinator(html, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
+    controlMessage(message) {
+      messages.push(message);
+      if (message.type !== 'xControlMarkSafe') return controls;
+      return { ...controls, activeAt: Date.now() + 86400000, safeMarks: [{ key, active: false, activeAt: Date.now() + 86400000 }] };
+    } });
+  const root = () => h.window.document.getElementById('video-root');
+  const findButton = label => [...h.window.document.querySelectorAll('button')].find(b => b.textContent === label);
+  try {
+    await flush(h.window, 12);
+    assert.equal(root().dataset.tabcloserMediaState, 'protected');
+    assert.equal(root().dataset.tabcloserMediaReason, 'visual');
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: [], videoSourcesByPoster: { [posterUrl]: { url: source } } } });
+    root().closest('a').querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /Custos checks the video again/);
+    const markButton = findButton('Mark not sensitive…');
+    markButton.click();
+    markButton.click();
+    await flush(h.window, 6);
+    const sent = messages.find(message => message.type === 'xControlMarkSafe');
+    assert.equal(sent.key, key);
+    assert.equal(sent.url, posterUrl);
+    assert.equal(sent.videoSource, source, 'the background gets the video file to sample');
+    assert.equal(root().dataset.tabcloserMediaState, 'protected', 'a pending mark keeps the video hidden');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [{ key, active: true, activeAt: 1 }] } });
+    await flush(h.window, 12);
+    assert.equal(root().dataset.tabcloserMediaState, 'safe', 'an active mark releases the video');
+    assert.equal(root().dataset.tabcloserMediaReason, 'marked');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [] } });
+    await flush(h.window, 12);
+    // The video is checked again (its frames now, since its file is known);
+    // it stays covered while that check runs.
+    assert.notEqual(root().dataset.tabcloserMediaState, 'safe', 'removing the mark covers it again');
+    assert.ok(root().closest('a').querySelector('.tabcloser-media-overlay'));
+  } finally { h.dom.window.close(); }
+});

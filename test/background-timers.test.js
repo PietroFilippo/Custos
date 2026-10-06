@@ -10,6 +10,26 @@ const rule = (domain, extra = {}) => ({
   blockAfterClose: true, blockDurationSec: 1800, ...extra,
 });
 
+// A video element for the background's own frame sampling: it "loads" and
+// "seeks" on the next microtask, so the harness's fake timers are not needed.
+function fakeVideo() {
+  const listeners = {};
+  const fire = name => Promise.resolve().then(() => (listeners[name] || []).slice().forEach(listener => listener()));
+  let time = 0;
+  let source = '';
+  return {
+    videoWidth: 640, videoHeight: 360, duration: 12,
+    addEventListener(name, listener) { (listeners[name] ||= []).push(listener); },
+    removeEventListener(name, listener) { listeners[name] = (listeners[name] || []).filter(other => other !== listener); },
+    get src() { return source; },
+    set src(value) { source = value; if (value) fire(/video\.twimg\.com/.test(value) ? 'loadeddata' : 'error'); },
+    get currentTime() { return time; },
+    set currentTime(value) { time = value; fire('seeked'); },
+    removeAttribute() { source = ''; },
+    load() {},
+  };
+}
+
 // Run the actual background script through its browser event/message seams.
 // Time, storage and tabs are isolated; no real tabs or extension data are touched.
 async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs: initialTabs,
@@ -42,7 +62,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
     AbortController,
     fetch: async target => ({ ok: true, url: target, headers: new Map([['content-type', 'image/jpeg']]), blob: async () => ({ size: 10 }) }),
     createImageBitmap: async () => ({ close() {} }),
-    document: { createElement: () => ({ getContext: () => ({ drawImage() {}, getImageData: () => ({}) }) }) },
+    document: { createElement: tag => tag === 'video' ? fakeVideo() : { getContext: () => ({ drawImage() {}, getImageData: () => ({}) }) } },
     browser: {
       storage: { local: {
         get: async () => structuredClone({ rules, blocks, accumSec, xProtection, xUserControls, adultSites }),
@@ -536,4 +556,31 @@ test('“Not sensitive” marks: borderline classifier images only, effective a 
   assert.equal((await h.send({ type: 'xControlUnmarkSafe', key: key('a') }, settingsSender)).ok, true);
   assert.equal((await h.send({ type: 'xControlGet' }, xSender)).safeMarks.length, 0);
   assert.equal(h.saved().xUserControls.safe[key('a')], undefined, 'removal is persisted');
+});
+
+test('“Not sensitive” marks on videos: the background re-scores the thumbnail and samples frames across the video itself', async () => {
+  const scores = values => ({ Drawing: 0.05, Hentai: 0.01, Neutral: 0.5, Porn: 0.04, Sexy: 0.4, ...values });
+  const borderline = { verdict: 'protect', reason: 'visual', adultScore: 0.24, scores: scores({}) };
+  const clean = { verdict: 'safe', reason: 'visual', adultScore: 0.02, scores: scores({ Sexy: 0.02, Neutral: 0.9 }) };
+  const confident = { verdict: 'protect', reason: 'visual', adultScore: 0.9, scores: scores({ Porn: 0.86, Neutral: 0 }) };
+  let queue = [];
+  let calls = 0;
+  const h = await start({ xProtection: { labeled: { enabled: true }, model: { enabled: true }, safeMarksPerDay: 3 },
+    classify: () => { calls += 1; return queue.length ? queue.shift() : clean; } });
+  const poster = id => 'https://pbs.twimg.com/amplify_video_thumb/' + id + '/img/p.jpg';
+  const mark = (id, videoSource = 'https://video.twimg.com/amplify_video/' + id + '/vid/a.mp4') =>
+    h.send({ type: 'xControlMarkSafe', key: '500|' + poster(id), url: poster(id) + '?format=jpg', videoSource }, xSender);
+  assert.match((await mark('1', null)).error, /could not find this video/, 'frames cannot be checked without the video file');
+  assert.match((await mark('1', 'https://evil.example/v.mp4')).error, /could not find this video/, 'only X’s video servers');
+  queue = [borderline];
+  calls = 0;
+  const accepted = await mark('2');
+  assert.equal(accepted.ok, true, 'a borderline thumbnail with clean frames can be marked');
+  assert.equal(calls, 1 + 6 * 2, 'the thumbnail, then six frames each with a center crop');
+  queue = [borderline, clean, clean, clean, confident];
+  assert.match((await mark('3')).error, /Part of this video is too confident/, 'one confident frame refuses the mark');
+  queue = [confident];
+  assert.match((await mark('4')).error, /too confident/, 'a confident thumbnail refuses the mark');
+  const controls = await h.send({ type: 'xControlGet' }, xSender);
+  assert.deepEqual(controls.safeMarks.map(entry => entry.key), ['500|' + poster('2')]);
 });

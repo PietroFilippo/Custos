@@ -880,25 +880,123 @@ async function scheduleSafeMarkAlarm() {
   browser.alarms.create('xSafeMarks', { when: Date.now() + Math.max(0, next - trustedNow()) + 1000 });
 }
 
-// A mark is accepted only for an image the classifier hides with a
-// borderline score. The background scores the image itself, so the page
-// cannot claim a low score.
+// For a mark on a video or GIF the background samples the video file
+// itself: six frames across the whole video, plus a center crop of each wide
+// or tall frame. Pixels never come from the page.
+const MARK_VIDEO_FRACTIONS = [0.15, 0.3, 0.5, 0.65, 0.85, 0.95];
+
+function waitForMediaEvent(target, name, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => done(new Error(name + ' timeout')), timeoutMs);
+    const onEvent = () => done(null);
+    const onError = () => done(new Error('video could not be loaded'));
+    function done(error) {
+      clearTimeout(timer);
+      target.removeEventListener(name, onEvent);
+      target.removeEventListener('error', onError);
+      if (error) reject(error); else resolve();
+    }
+    target.addEventListener(name, onEvent);
+    target.addEventListener('error', onError);
+  });
+}
+
+function videoFramePixels(video, crop) {
+  const width = video.videoWidth || 0;
+  const height = video.videoHeight || 0;
+  const side = Math.min(width, height);
+  if (crop && (!side || Math.max(width, height) / side < 1.3)) return null;
+  const size = TabCloserXVerdict.MODEL_INPUT_SIZE;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('canvas is unavailable');
+  if (crop) context.drawImage(video, (width - side) / 2, (height - side) / 2, side, side, 0, 0, size, size);
+  else context.drawImage(video, 0, 0, size, size);
+  return context.getImageData(0, 0, size, size);
+}
+
+async function sampleVideoForMark(source) {
+  const video = document.createElement('video');
+  video.crossOrigin = 'anonymous';
+  video.muted = true;
+  video.preload = 'auto';
+  const loaded = waitForMediaEvent(video, 'loadeddata', 10000);
+  video.src = source;
+  // Attached like the page's own probe; it is never shown or played.
+  document.documentElement?.appendChild(video);
+  try {
+    await loaded;
+    const duration = video.duration;
+    if (!Number.isFinite(duration) || duration <= 0) throw new Error('video duration unavailable');
+    const latest = Math.max(0, duration - 0.1);
+    const times = [...new Set(MARK_VIDEO_FRACTIONS.map(fraction => Math.round(Math.min(latest, duration * fraction) * 1000) / 1000))];
+    const results = [];
+    for (const time of times) {
+      if (Math.abs(video.currentTime - time) > 0.01) {
+        const seeked = waitForMediaEvent(video, 'seeked', 5000);
+        video.currentTime = time;
+        await seeked;
+      }
+      for (const crop of [false, true]) {
+        const pixels = videoFramePixels(video, crop);
+        if (pixels) results.push(await enqueueXClassification(() => TabCloserClassifier.classifyImageData(pixels, state.xProtection.model.sensitivity)));
+      }
+    }
+    return results;
+  } finally {
+    video.removeAttribute('src');
+    video.load?.();
+    video.remove?.();
+  }
+}
+
+// A mark is accepted only for media the classifier hides with a borderline
+// score. The background checks it itself, so the page cannot claim a low
+// score: it re-scores an image, and for a video or GIF it re-scores the
+// thumbnail and samples frames across the whole video.
 async function verifySafeMark(msg, sender) {
-  if (!Number.isInteger(sender?.tab?.id) || !isXPageUrl(sender?.tab?.url || sender?.url || '')) return { ok: false, error: 'Mark images on X.' };
+  if (!Number.isInteger(sender?.tab?.id) || !isXPageUrl(sender?.tab?.url || sender?.url || '')) return { ok: false, error: 'Mark media on X.' };
   const key = msg.key;
-  if (!TabCloserXUserControls.validMedia(key) || typeof msg.url !== 'string') return { ok: false, error: 'This image has no stable identity.' };
+  const noIdentity = { ok: false, error: 'This image or video has no stable identity.' };
+  if (!TabCloserXUserControls.validMedia(key) || typeof msg.url !== 'string') return noIdentity;
   let url;
-  try { url = new URL(msg.url); } catch { return { ok: false, error: 'This image has no stable identity.' }; }
-  if (url.protocol !== 'https:' || url.hostname !== 'pbs.twimg.com' || /_video_thumb\//.test(url.pathname) ||
-      TabCloserXMetadata.normalizeMediaUrl(url.href) !== key.slice(key.indexOf('|') + 1)) {
-    return { ok: false, error: 'Only images can be marked, not videos or GIFs.' };
+  try { url = new URL(msg.url); } catch { return noIdentity; }
+  if (url.protocol !== 'https:' || url.hostname !== 'pbs.twimg.com' ||
+      TabCloserXMetadata.normalizeMediaUrl(url.href) !== key.slice(key.indexOf('|') + 1)) return noIdentity;
+  const isVideo = /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(url.pathname);
+  let videoSource = null;
+  if (isVideo) {
+    try { videoSource = new URL(msg.videoSource); } catch {}
+    if (videoSource?.protocol !== 'https:' || videoSource.hostname !== 'video.twimg.com') {
+      return { ok: false, error: 'Custos could not find this video’s file to check it. Open the post and try again.' };
+    }
   }
   if (!state.xProtection.model.enabled) return { ok: false, error: 'Marks apply to the on-device classifier, which is off.' };
   if (state.xProtection.safeMarksPerDay <= 0) return { ok: false, error: '“Not sensitive” marks are off. Set a daily number in Custos settings.' };
+  const noun = isVideo ? 'video' : 'image';
   const result = await classifyXMedia({ kind: 'url', url: url.href, mediaKey: 'mark|' + key }, sender);
-  if (result.reason !== 'visual') return { ok: false, error: 'Custos could not check this image again. Try later.' };
-  if (result.verdict !== 'protect') return { ok: false, error: 'At your current sensitivity the classifier does not hide this image.' };
-  if (!TabCloserXVerdict.markEligible(result.scores)) return { ok: false, error: 'This detection is too confident to mark as not sensitive.' };
+  if (result.reason !== 'visual') return { ok: false, error: 'Custos could not check this ' + noun + ' again. Try later.' };
+  const tooConfident = { ok: false, error: 'This detection is too confident to mark as not sensitive.' };
+  if (!isVideo) {
+    if (result.verdict !== 'protect') return { ok: false, error: 'At your current sensitivity the classifier does not hide this image.' };
+    return TabCloserXVerdict.markEligible(result.scores) ? { ok: true } : tooConfident;
+  }
+  // A video is hidden by its frames taken together, so every sampled frame
+  // and the thumbnail must be borderline or safe.
+  if (!TabCloserXVerdict.markEligible(result.scores)) return tooConfident;
+  let frames;
+  try {
+    frames = await sampleVideoForMark(videoSource.href);
+  } catch {
+    return { ok: false, error: 'Custos could not check this video again. Try later.' };
+  }
+  const checked = frames.filter(frame => frame?.reason === 'visual');
+  if (checked.length < 3) return { ok: false, error: 'Custos could not check this video again. Try later.' };
+  if (!checked.every(frame => TabCloserXVerdict.markEligible(frame.scores))) {
+    return { ok: false, error: 'Part of this video is too confident a detection to mark as not sensitive.' };
+  }
   return { ok: true };
 }
 
@@ -932,7 +1030,7 @@ async function handleXControlMessage(msg, sender, verified = null) {
   if (msg.type === 'xControlMarkSafe') {
     // Only reachable after verifySafeMark; the flag comes from the listener,
     // never from the message.
-    if (!fromX || verified?.ok !== true) return { ok: false, error: 'Mark images on X.' };
+    if (!fromX || verified?.ok !== true) return { ok: false, error: 'Mark media on X.' };
     const result = TabCloserXUserControls.markSafe(xUserControls, {
       key: msg.key, perDay: state.xProtection.safeMarksPerDay, now: trustedNow(),
     });
