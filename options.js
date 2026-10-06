@@ -698,7 +698,7 @@ function renderReveals(config, locks) {
   const revealLocked = isLocked(config.revealLockUntil);
   const xLocked = locks.labeled || locks.model;
   if (!revealDraft) $xReveal.value = config.revealDailySec || 0;
-  $xReveal.max = xLocked || revealLocked ? config.revealDailySec || 0 : 3600;
+  $xReveal.max = xLocked || revealLocked ? config.revealDailySec || 0 : 50;
   // Per-post time follows the allowance's lock rule: it may only go down.
   const perPost = Number.isInteger(config.revealPerPostSec) ? config.revealPerPostSec : 3;
   $xRevealPerPost.value = String(perPost);

@@ -14,7 +14,7 @@ const state = {
     sacredArt: false,   // presentation only: cover hidden media with a painting instead of the blur
     groupMedia: false,  // hide all of a post's media when one item is hidden
     revealDailySec: 0,  // opt-in; shared across all X tabs
-    revealPerPostSec: 3, // daily reveal time per post, 3-10 s
+    revealPerPostSec: 3, // daily reveal time per post, 3-5 s
     revealLockUntil: null,
     safeMarksPerDay: 0, // "Not sensitive" marks allowed per day (0-5); 0 turns them off
     profile: null,      // see normalizeXProfile
@@ -81,7 +81,7 @@ async function loadState() {
     blockLike: raw.blockLike === true,
     sacredArt: raw.sacredArt === true,
     groupMedia: raw.groupMedia === true,
-    revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
+    revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(TabCloserXUserControls.MAX_DAILY_SEC, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
     revealPerPostSec: TabCloserXUserControls.postLimitSec(raw.revealPerPostSec),
     safeMarksPerDay: TabCloserXUserControls.safeMarksPerDay(raw.safeMarksPerDay),
@@ -1106,8 +1106,8 @@ async function handleMessage(msg, sender) {
       const modelEnabled = typeof msg.model === 'boolean' ? msg.model : current.model.enabled;
       const labeledEnabled = (typeof msg.labeled === 'boolean' ? msg.labeled : current.labeled.enabled) || modelEnabled;
       if (msg.revealDailySec != null) {
-        if (!Number.isInteger(msg.revealDailySec) || msg.revealDailySec < 0 || msg.revealDailySec > 3600) {
-          return { ok: false, error: 'Choose a daily allowance from 0 to 3600 seconds.' };
+        if (!Number.isInteger(msg.revealDailySec) || msg.revealDailySec < 0 || msg.revealDailySec > TabCloserXUserControls.MAX_DAILY_SEC) {
+          return { ok: false, error: 'Choose a daily allowance from 0 to ' + TabCloserXUserControls.MAX_DAILY_SEC + ' seconds.' };
         }
         if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealDailySec > current.revealDailySec) {
           return { ok: false, error: 'The reveal allowance cannot increase while its allowance lock or X protection lock is active.' };
@@ -1115,7 +1115,7 @@ async function handleMessage(msg, sender) {
       }
       if (msg.revealPerPostSec != null) {
         if (TabCloserXUserControls.postLimitSec(msg.revealPerPostSec) !== msg.revealPerPostSec) {
-          return { ok: false, error: 'Choose 3 to 10 seconds per post.' };
+          return { ok: false, error: 'Choose 3 to ' + TabCloserXUserControls.MAX_POST_SEC + ' seconds per post.' };
         }
         if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealPerPostSec > current.revealPerPostSec) {
           return { ok: false, error: 'The time per post cannot increase while its allowance lock or X protection lock is active.' };
