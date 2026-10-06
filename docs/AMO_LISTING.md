@@ -13,6 +13,7 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 - **Homepage:** <https://github.com/PietroFilippo/Custos>
 - **Support site:** <https://github.com/PietroFilippo/Custos/issues>
 - **Privacy policy:** paste [PRIVACY.md](../PRIVACY.md)
+- **Icon:** upload `icons/icon-128.png` under Images in the Developer Hub. AMO does not take the listing icon from the manifest's SVG; without an upload it shows a default puzzle piece.
 
 ## Summary (250 characters max)
 
