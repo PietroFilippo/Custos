@@ -130,8 +130,9 @@ async function startCoordinator(html, {
     debugMessages,
     async sendContentMessage(message) {
       assert.ok(contentMessageListeners.length, 'content-script message listener was not registered');
-      for (const listener of contentMessageListeners) listener(message);
+      const results = contentMessageListeners.map(listener => listener(message));
       await flush(window);
+      return Promise.all(results);
     },
     window,
   };
@@ -2130,9 +2131,11 @@ test('“Not sensitive” marks are not offered for confident detections, X labe
     assert.equal(text.includes('Mark not sensitive'), false);
   } finally { confident.dom.window.close(); }
   const offLocked = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
-    controlMessage: () => ({ ...allowed, safeMarksPerDay: 0, safeMarksLeft: 0, allowanceLocked: true }) });
+    controlMessage: () => ({ ...allowed, safeMarksPerDay: 0, safeMarksLeft: 0, allowanceLocked: true, allowanceLockUntil: Date.now() + 86400000 }) });
   try {
-    assert.equal((await panelText(offLocked)).includes('Not sensitive?'), false, 'no nudge toward a setting that is locked');
+    const text = await panelText(offLocked);
+    assert.match(text, /marks are off, and a lock keeps them off until/, 'explains why marking is unavailable');
+    assert.equal(text.includes('Mark not sensitive'), false);
   } finally { offLocked.dom.window.close(); }
   const labelled = await startCoordinator(controlFixture.replace('<img src=', '<span>Warning: Nudity</span><img src='), {
     interactions: true, prepare: withCommon, controlMessage: () => allowed, classify: () => borderlineVerdict });
@@ -2255,5 +2258,26 @@ test('a video hidden by the classifier can be marked, is released once the mark 
     // it stays covered while that check runs.
     assert.notEqual(root().dataset.tabcloserMediaState, 'safe', 'removing the mark covers it again');
     assert.ok(root().closest('a').querySelector('.tabcloser-media-overlay'));
+  } finally { h.dom.window.close(); }
+});
+
+test('the right-click hide items only show when the media or text is not already hidden', async () => {
+  const html = '<article><a href="/example/status/600"><time>1h</time></a><div id="text" data-testid="tweetText">Hello</div>' +
+    '<a href="/example/status/600/photo/1"><div id="hidden-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/hidden.jpg"></div></a>' +
+    '<a href="/example/status/600/photo/2"><div id="safe-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/safe.jpg"></div></a></article>';
+  const h = await startCoordinator(html, { interactions: true,
+    classify: message => message.url?.includes('hidden') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  const stateFor = async id => {
+    h.window.document.getElementById(id).dispatchEvent(new h.window.MouseEvent('contextmenu', { bubbles: true }));
+    const [state] = (await h.sendContentMessage({ type: 'xContextMenuState' })).filter(Boolean);
+    return JSON.parse(JSON.stringify(state)); // a plain object from the page's realm
+  };
+  try {
+    await flush(h.window, 12);
+    assert.deepEqual(await stateFor('hidden-photo'), { media: false, text: true }, 'covered media offers no media hide');
+    assert.deepEqual(await stateFor('safe-photo'), { media: true, text: true });
+    assert.deepEqual(await stateFor('text'), { media: false, text: true }, 'no media hide on text');
+    h.window.document.getElementById('text').dataset.tabcloserQuoted = 'yes';
+    assert.deepEqual(await stateFor('safe-photo'), { media: true, text: false }, 'text replaced by a quote offers no text hide');
   } finally { h.dom.window.close(); }
 });

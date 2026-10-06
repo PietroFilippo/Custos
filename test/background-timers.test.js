@@ -33,7 +33,7 @@ function fakeVideo() {
 // Run the actual background script through its browser event/message seams.
 // Time, storage and tabs are isolated; no real tabs or extension data are touched.
 async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs: initialTabs,
-  url = 'https://x.com/home', xProtection = {}, xUserControls = {}, adultSites = {}, adultListFails = false, classify = null } = {}) {
+  url = 'https://x.com/home', xProtection = {}, xUserControls = {}, adultSites = {}, adultListFails = false, classify = null, tabReply = null } = {}) {
   let now = 100000;
   let mono = 0;
   let activeId = 1;
@@ -41,7 +41,8 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
   let timerId = 0;
   let saved;
   const tabs = initialTabs || [{ id: 1, url, windowId: 1 }];
-  const events = {}, timers = new Map(), alarms = new Map(), removed = [], updates = [], tabMessages = [], filters = [];
+  const events = {}, timers = new Map(), alarms = new Map(), removed = [], updates = [], tabMessages = [], filters = [], menuUpdates = [];
+  let menuRefreshes = 0;
   const event = name => ({ addListener(fn, filter) { events[name === 'request' && filter?.types?.includes('main_frame') ? 'adultRequest' : name] = fn; } });
   const context = vm.createContext({
     console, URL, TextDecoder, Uint8ClampedArray, ArrayBuffer,
@@ -73,7 +74,7 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
       tabs: {
         query: async query => query.url ? [] : query.active
           ? tabs.filter(tab => tab.id === activeId) : tabs.slice(),
-        sendMessage: async (tabId, message) => { tabMessages.push({ tabId, message }); return {}; },
+        sendMessage: async (tabId, message) => { tabMessages.push({ tabId, message }); return tabReply ? tabReply(message) : {}; },
         update: async (id, change) => {
           updates.push({ id, ...change });
           Object.assign(tabs.find(tab => tab.id === id) || {}, change);
@@ -102,6 +103,11 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
         },
       },
       webNavigation: { onBeforeNavigate: event('navigate') },
+      menus: {
+        update: async (id, change) => { menuUpdates.push({ id, ...change }); },
+        refresh() { menuRefreshes += 1; },
+        onShown: event('menuShown'), onHidden: event('menuHidden'), onClicked: event('menuClicked'),
+      },
     },
   });
   for (const file of ['common.js', 'background.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context);
@@ -109,7 +115,8 @@ async function start({ rules = [rule('x.com')], blocks = {}, accumSec = {}, tabs
   const send = (message, sender) => events.message(message, sender);
   const state = () => send({ type: 'getState' });
   return {
-    events, timers, alarms, removed, updates, send, state, tabMessages, filters,
+    events, timers, alarms, removed, updates, send, state, tabMessages, filters, menuUpdates,
+    menuRefreshes: () => menuRefreshes,
     saved: () => saved,
     advance(seconds) { now += seconds * 1000; mono += seconds * 1000; },
     // Moves only the device clock, as a user changing the system time would.
@@ -583,4 +590,17 @@ test('“Not sensitive” marks on videos: the background re-scores the thumbnai
   assert.match((await mark('4')).error, /too confident/, 'a confident thumbnail refuses the mark');
   const controls = await h.send({ type: 'xControlGet' }, xSender);
   assert.deepEqual(controls.safeMarks.map(entry => entry.key), ['500|' + poster('2')]);
+});
+
+test('right-click hide items hide when the page reports nothing left to hide, and come back after the menu closes', async () => {
+  const h = await start({ tabReply: message => message.type === 'xContextMenuState' ? { media: false, text: true } : {} });
+  await h.events.menuShown({ menuIds: ['tabcloser-hide-text', 'tabcloser-hide-media'], frameId: 0 }, { id: 1 });
+  assert.deepEqual(h.menuUpdates, [{ id: 'tabcloser-hide-text', visible: true }, { id: 'tabcloser-hide-media', visible: false }]);
+  assert.equal(h.menuRefreshes(), 1, 'the open menu is redrawn');
+  h.menuUpdates.length = 0;
+  await h.events.menuHidden();
+  assert.deepEqual(h.menuUpdates, [{ id: 'tabcloser-hide-text', visible: true }, { id: 'tabcloser-hide-media', visible: true }]);
+  const silent = await start({ tabReply: () => { throw new Error('no content script'); } });
+  await silent.events.menuShown({ menuIds: ['tabcloser-hide-media'], frameId: 0 }, { id: 1 });
+  assert.deepEqual(silent.menuUpdates, [], 'without an answer the items stay as they are');
 });

@@ -865,6 +865,8 @@ function xControlSnapshot(postId) {
     safeMarksPerDay: state.xProtection.safeMarksPerDay,
     safeMarksLeft: TabCloserXUserControls.marksLeft(xUserControls, state.xProtection.safeMarksPerDay, now),
     allowanceLocked: xAllowanceLocked(),
+    allowanceLockUntil: Math.max(0, ...[state.xProtection.labeled.lockUntil, state.xProtection.model.lockUntil, state.xProtection.revealLockUntil]
+      .filter(isLockActive)) || null,
   };
 }
 
@@ -1075,6 +1077,22 @@ browser.runtime.onInstalled?.addListener(async () => {
   await browser.menus.removeAll();
   browser.menus.create({ id: 'tabcloser-hide-text', title: 'Custos: hide this post’s text', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
   browser.menus.create({ id: 'tabcloser-hide-media', title: 'Custos: hide this image / video', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
+});
+// Each item only shows when it has something to do: the page reports
+// whether the right-clicked media or post text is already hidden.
+const MANUAL_MENU_IDS = ['tabcloser-hide-text', 'tabcloser-hide-media'];
+browser.menus?.onShown?.addListener(async (info, tab) => {
+  if (!info.menuIds?.some(id => MANUAL_MENU_IDS.includes(id)) || !Number.isInteger(tab?.id)) return;
+  const available = await browser.tabs.sendMessage(tab.id, { type: 'xContextMenuState' }, { frameId: info.frameId || 0 }).catch(() => null);
+  if (!available) return;
+  await Promise.all([
+    browser.menus.update('tabcloser-hide-text', { visible: available.text !== false }),
+    browser.menus.update('tabcloser-hide-media', { visible: available.media !== false }),
+  ]).catch(() => {});
+  browser.menus.refresh?.();
+});
+browser.menus?.onHidden?.addListener(() => {
+  for (const id of MANUAL_MENU_IDS) browser.menus.update(id, { visible: true }).catch(() => {});
 });
 browser.menus?.onClicked.addListener((info, tab) => {
   if (!['tabcloser-hide-text', 'tabcloser-hide-media'].includes(info.menuItemId) || !Number.isInteger(tab?.id)) return;
