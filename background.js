@@ -1012,10 +1012,8 @@ async function handleMessage(msg, sender) {
       if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to change this protection.' };
       if (typeof msg.enabled !== 'boolean' || (msg.safeSearch != null && typeof msg.safeSearch !== 'boolean')) return { ok: false, error: 'Invalid adult-site setting.' };
       if (!msg.enabled && isLockActive(state.adultSites.lockUntil)) return { ok: false, error: 'Adult-site protection is locked until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
-      // SafeSearch shares the adult-site lock: it can be added, never removed early.
-      if (msg.safeSearch === false && state.adultSites.safeSearch && isLockActive(state.adultSites.lockUntil)) {
-        return { ok: false, error: 'SafeSearch is locked with adult-site protection until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
-      }
+      // The lock keeps the domain block on. SafeSearch only changes search
+      // pages, so it stays editable during the lock.
       if (msg.enabled && !await loadAdultList()) return { ok: false, error: adultListError };
       state.adultSites.enabled = msg.enabled;
       if (typeof msg.safeSearch === 'boolean') state.adultSites.safeSearch = msg.safeSearch;
@@ -1150,18 +1148,12 @@ async function handleMessage(msg, sender) {
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
       if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
       if (msg.safeMarksPerDay != null) current.safeMarksPerDay = msg.safeMarksPerDay;
-      // Text replacement, like blocking, and hiding a post's other media are
-      // protections, not presentation: under an X lock they can be turned on
-      // but not off.
-      if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false) ||
-          (current.groupMedia && msg.groupMedia === false))) {
-        return { ok: false, error: 'Text replacement, like blocking, and hiding a post’s other media cannot be turned off while X protection is locked.' };
-      }
+      // How hidden posts are handled (the painting cover, text replacement,
+      // like blocking, hiding a post's other media) stays editable during
+      // every lock: the lock keeps the media itself hidden.
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
       if (typeof msg.groupMedia === 'boolean') current.groupMedia = msg.groupMedia;
-      // Presentation only: the painting and the blur hide the same media, so
-      // this stays editable during every lock.
       if (typeof msg.sacredArt === 'boolean') current.sacredArt = msg.sacredArt;
       if (modelEnabled) TabCloserClassifier.warmUp();
       await persist();
@@ -1186,14 +1178,9 @@ async function handleMessage(msg, sender) {
         if (!['plain', 'virtue'].includes(msg.alias)) return { ok: false, error: 'Unknown alias style.' };
         change.alias = msg.alias;
       }
-      const next = normalizeXProfile({ ...current, ...change });
-      // Under an X lock profile protection may only tighten. The alias style
-      // is presentation and stays free.
-      if (xControlsLocked() && (PROFILE_IMAGE_RANK[next.images] < PROFILE_IMAGE_RANK[current.images] ||
-          PROFILE_SWITCHES.some(key => current[key] && !next[key]))) {
-        return { ok: false, error: 'Profile protection can only get stricter while X protection is locked.' };
-      }
-      state.xProtection.profile = next;
+      // Profile protection changes how accounts' pictures, names, and replies
+      // are shown, not whether media is hidden, so an X lock leaves it editable.
+      state.xProtection.profile = normalizeXProfile({ ...current, ...change });
       await persist();
       await notifyXProtection();
       return { ok: true };
