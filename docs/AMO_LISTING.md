@@ -30,7 +30,7 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 >
 > **Profile protection.** Blur the profile pictures and banners of accounts X marks as sensitive (or of everyone you don't follow), replace their names with an alias, and fold their replies.
 >
-> **Locks.** Lock any protection for an hour, a day, a week, 30 days, or until a date. While locked, settings can only get stricter. Changing the system clock does not end a lock early.
+> **Locks.** Lock any protection for an hour, a day, a week, 30 days, or until a date. While locked, the protection itself can only get stricter, and how hidden content is shown stays your choice. Changing the system clock does not end a lock early.
 >
 > **Friction instead of loopholes.** A brief hold-to-reveal with a small daily allowance, and “Not sensitive” marks for classifier mistakes that only take effect a day later.
 >
@@ -42,13 +42,15 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 
 ## Screenshots to upload
 
-Take them in Firefox at 1280×800 with sample settings (no real posts from other people):
+The files are in [docs/screenshots/](screenshots/), 1280×800, in upload order. They are rendered from the extension's real pages with sample settings and fictional accounts; the photos in posts are CC0 paintings from the Art Institute of Chicago (Monet, *Water Lily Pond*; Salomon van Ruysdael, *River Landscape with a View of Naarden*). The X page is a stand-in without X branding. Captions:
 
-1. Settings, at-a-glance cards and the X protection section.
-2. An X post with blurred media and the “Why hidden?” panel.
-3. The same post with sacred art on.
-4. The toolbar popup with a few timers.
-5. The block page.
+1. `1-x-why-hidden.png`: Hidden media stays in place, blurred, and “Why hidden?” explains the decision. A brief hold-to-reveal and delayed “Not sensitive” marks are optional.
+2. `2-x-sacred-art.png`: Optionally cover hidden media with a public-domain sacred painting. Replies from accounts X flags as sensitive fold into one line under an alias.
+3. `3-popup.png`: The toolbar popup shows what is on, what is locked, and the timer for the current site.
+4. `4-settings-overview.png`: Settings start with an at-a-glance summary. Site timers count only while the tab is focused, and locks keep rules from being loosened.
+5. `5-settings-x-protection.png`: X labels alone, or labels plus an on-device classifier with three sensitivities. While locked, the level can only go up.
+6. `6-settings-hidden-media.png`: Choose how hidden media looks and behaves, set a small daily reveal allowance, and allow “Not sensitive” marks for classifier mistakes.
+7. `7-block-page.png`: A blocked site shows when it becomes available again. The page has no unblock button.
 
 ## Notes for reviewers
 
