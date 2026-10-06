@@ -311,8 +311,8 @@
     document.querySelectorAll('article[data-tabcloser-collapsed]').forEach(article => {
       if (statusIdFor(article) === lease.postId) mark(article, 'data-tabcloser-collapse-revealed');
     });
-    document.querySelectorAll('.tabcloser-hidden-text, .tabcloser-quote, .tabcloser-manual-text-notice').forEach(node => {
-      if (statusIdFor(node) === lease.postId) mark(node, node.classList.contains('tabcloser-hidden-text') ? 'data-tabcloser-text-revealed' : 'data-tabcloser-quote-revealed');
+    document.querySelectorAll('[data-tabcloser-hidden-text], .tabcloser-quote, .tabcloser-manual-text-notice').forEach(node => {
+      if (statusIdFor(node) === lease.postId) mark(node, node.hasAttribute('data-tabcloser-hidden-text') ? 'data-tabcloser-text-revealed' : 'data-tabcloser-quote-revealed');
     });
   }
   function stopReveal() {
@@ -356,14 +356,14 @@
       if (!text.isConnected || !textHidden(text)) {
         notice.remove(); manualTexts.delete(text);
         delete text.dataset.tabcloserManualText;
-        if (text.dataset.tabcloserQuoted !== 'yes') text.classList.remove('tabcloser-hidden-text');
+        if (text.dataset.tabcloserQuoted !== 'yes') text.removeAttribute('data-tabcloser-hidden-text');
       }
     }
     if (posts.size || texts.size) {
       for (const text of targets.flatMap(target => [...textsWithin(target)])) {
         if (!textHidden(text)) continue;
         text.dataset.tabcloserManualText = '';
-        text.classList.add('tabcloser-hidden-text');
+        text.setAttribute('data-tabcloser-hidden-text', '');
         if (manualTexts.get(text)?.isConnected) continue;
         const notice = document.createElement('div');
         notice.className = 'tabcloser-controls tabcloser-manual-text-notice';
@@ -443,7 +443,7 @@
     const article = target?.closest('article');
     const statusId = target && statusIdFor(target);
     const texts = article && statusId ? [...article.querySelectorAll('[data-testid="tweetText"]')].filter(text => statusIdFor(text) === statusId) : [];
-    const text = texts.some(item => !textHidden(item) && item.dataset.tabcloserQuoted !== 'yes' && !item.classList.contains('tabcloser-hidden-text'));
+    const text = texts.some(item => !textHidden(item) && item.dataset.tabcloserQuoted !== 'yes' && !item.hasAttribute('data-tabcloser-hidden-text'));
     return { media, text };
   }
   browser.runtime.onMessage.addListener(message => {

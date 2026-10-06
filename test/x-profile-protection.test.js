@@ -98,17 +98,17 @@ test('display names of flagged accounts get one stable virtue alias and come bac
     const cellAlias = h.document.querySelector('#cell .tabcloser-alias');
     assert.match(replyAlias.textContent, /^[A-Z][a-z]+ ✝$/);
     assert.equal(cellAlias.textContent, replyAlias.textContent, 'the same account keeps the same alias everywhere');
-    assert.ok(replyAlias.nextElementSibling.classList.contains('tabcloser-name-hidden'));
+    assert.ok(replyAlias.nextElementSibling.dataset.tabcloserHide === 'name');
     assert.equal(h.document.querySelector('#friend-reply .tabcloser-alias'), null, 'unflagged accounts keep their names');
     const handle = [...h.document.querySelectorAll('#reply [data-testid="User-Name"] div[dir]')].find(node => node.textContent === '@Spicy_One');
-    assert.ok(handle.classList.contains('tabcloser-handle-hidden'), 'explicit handles are hidden too');
-    assert.ok([...h.document.querySelectorAll('#friend-reply [data-testid="User-Name"] div[dir]')].every(node => !node.classList.contains('tabcloser-handle-hidden')));
+    assert.ok(handle.dataset.tabcloserHide === 'handle', 'explicit handles are hidden too');
+    assert.ok([...h.document.querySelectorAll('#friend-reply [data-testid="User-Name"] div[dir]')].every(node => node.dataset.tabcloserHide !== 'handle'));
     await h.send({ type: 'xProtectionChanged', xProtection: { profile: { ...flaggedProfile, alias: 'plain' } } });
     assert.equal(h.document.querySelector('#reply .tabcloser-alias').textContent, 'Hidden account');
     await h.send({ type: 'xProtectionChanged', xProtection: { profile: { ...flaggedProfile, names: false } } });
     assert.equal(h.document.querySelector('.tabcloser-alias'), null);
-    assert.equal(h.document.querySelector('.tabcloser-name-hidden'), null);
-    assert.equal(handle.classList.contains('tabcloser-handle-hidden'), false, 'the handle returns with the name');
+    assert.equal(h.document.querySelector('[data-tabcloser-hide="name"]'), null);
+    assert.equal(handle.dataset.tabcloserHide === 'handle', false, 'the handle returns with the name');
   } finally { h.close(); }
 });
 
@@ -180,19 +180,19 @@ test('a flagged profile page aliases its top bar and mentions, and hides the han
   try {
     const bar = h.document.getElementById('top-bar');
     assert.match(bar.querySelector('.tabcloser-alias').textContent, /^[A-Z][a-z]+ ✝$/);
-    assert.ok(bar.querySelector('.tabcloser-name-hidden'));
-    assert.ok(h.document.querySelector('[data-testid="UserName"] .tabcloser-handle-hidden'));
-    assert.ok(h.document.getElementById('bio').classList.contains('tabcloser-bio-hidden'));
+    assert.ok(bar.querySelector('[data-tabcloser-hide="name"]'));
+    assert.ok(h.document.querySelector('[data-testid="UserName"] [data-tabcloser-hide="handle"]'));
+    assert.ok(h.document.getElementById('bio').dataset.tabcloserHide === 'bio');
     assert.match(h.document.querySelector('.tabcloser-bio-notice').textContent, /Bio hidden/);
-    assert.ok(h.document.getElementById('website').classList.contains('tabcloser-bio-hidden'));
+    assert.ok(h.document.getElementById('website').dataset.tabcloserHide === 'bio');
     for (const id of ['mention', 'replying']) {
       const link = h.document.getElementById(id);
-      assert.ok(link.classList.contains('tabcloser-name-hidden'), id + ' is replaced');
+      assert.ok(link.dataset.tabcloserHide === 'name', id + ' is replaced');
       assert.match(link.previousElementSibling.textContent, /^[A-Z][a-z]+ ✝$/);
     }
     assert.equal(h.document.querySelector('#mentioning [data-testid="User-Name"] .tabcloser-alias'), null, 'the unflagged author keeps their name');
     await h.send({ type: 'xProtectionChanged', xProtection: { profile: { ...flaggedProfile, names: false } } });
-    assert.equal(h.document.querySelector('.tabcloser-alias, .tabcloser-name-hidden, .tabcloser-handle-hidden, .tabcloser-bio-hidden, .tabcloser-bio-notice'), null,
+    assert.equal(h.document.querySelector('.tabcloser-alias, [data-tabcloser-hide], .tabcloser-bio-notice'), null,
       'switching names off restores everything');
   } finally { h.close(); }
 });
@@ -213,7 +213,7 @@ test('aliases follow accounts when X reuses an element for another author', asyn
     relink('Spicy_One', 'friend');
     await h.settle();
     assert.equal(friend.querySelector('.tabcloser-alias'), null, 'the alias goes when the element returns to an unflagged account');
-    assert.equal(friend.querySelector('.tabcloser-name-hidden, .tabcloser-handle-hidden'), null);
+    assert.equal(friend.querySelector('[data-tabcloser-hide]'), null);
   } finally { h.close(); }
 });
 
@@ -222,5 +222,33 @@ test('without name replacement, a collapsed reply names the account by its handl
   try {
     const notice = h.document.querySelector('#reply .tabcloser-collapsed-reply');
     assert.match(notice.textContent, /Reply from a hidden account @spicy_one/);
+  } finally { h.close(); }
+});
+
+test('an alias survives X redrawing the name on hover', async () => {
+  const h = await start(flaggedProfile);
+  const aliases = () => [...h.document.querySelectorAll('#reply .tabcloser-alias')];
+  const nudge = async () => { h.document.getElementById('reply').appendChild(h.document.createElement('span')); await h.settle(); };
+  try {
+    const name = aliases()[0].nextElementSibling;
+    // React rewrites the class attribute for the hover underline.
+    name.className = 'css-1jxf684 r-hover-underline';
+    await nudge();
+    assert.equal(name.dataset.tabcloserHide, 'name', 'a class rewrite cannot reveal the name');
+    assert.equal(aliases().length, 1);
+    // Even if the hide marker is lost, the alias hides its name again.
+    delete name.dataset.tabcloserHide;
+    await nudge();
+    assert.equal(name.dataset.tabcloserHide, 'name');
+    assert.equal(aliases().length, 1, 'the alias stays');
+    // X may also replace the name element outright.
+    const fresh = h.document.createElement('div');
+    fresh.setAttribute('dir', 'ltr');
+    fresh.innerHTML = '<span>Spicy name</span>';
+    name.replaceWith(fresh);
+    await h.settle();
+    await nudge();
+    assert.equal(fresh.dataset.tabcloserHide, 'name', 'the new element is hidden too');
+    assert.equal(aliases().length, 1, 'exactly one alias remains');
   } finally { h.close(); }
 });

@@ -253,14 +253,14 @@ function overlayFor(root) {
 // getComputedStyle forces a style recalculation of the page, so each host is
 // measured once when it first gets a cover, not on every redraw.
 function activateOverlayHost(host) {
-  if (host.classList.contains('tabcloser-overlay-host')) return;
-  host.classList.add('tabcloser-overlay-host');
+  if (host.hasAttribute('data-tabcloser-overlay-host')) return;
+  host.setAttribute('data-tabcloser-overlay-host', '');
   const position = getComputedStyle(host).position;
-  if (!position || position === 'static') host.classList.add('tabcloser-overlay-host-static');
+  if (!position || position === 'static') host.setAttribute('data-tabcloser-overlay-host', 'static');
 }
 
 function clearOverlayHost(host) {
-  host.classList.remove('tabcloser-overlay-host', 'tabcloser-overlay-host-static');
+  host.removeAttribute('data-tabcloser-overlay-host');
 }
 
 // CSS blur radii are absolute: a radius that erases a timeline thumbnail
@@ -538,7 +538,7 @@ function applyQuoteFor(root) {
   const quote = quoteForKey(statusId || text.textContent.slice(0, 40));
   if (!quote) return;
   text.dataset.tabcloserQuoted = 'yes';
-  text.classList.add('tabcloser-hidden-text');
+  text.setAttribute('data-tabcloser-hidden-text', '');
   const block = document.createElement('div');
   block.className = 'tabcloser-quote';
   // X sets its font on the text element itself, not its container; without
@@ -560,7 +560,7 @@ function restoreLayerText(article, layer) {
   for (const text of article.querySelectorAll('[data-testid="tweetText"][data-tabcloser-quoted]')) {
     if (tweetLayerFor(text, article) !== layer) continue;
     delete text.dataset.tabcloserQuoted;
-    if (!text.hasAttribute('data-tabcloser-manual-text')) text.classList.remove('tabcloser-hidden-text');
+    if (!text.hasAttribute('data-tabcloser-manual-text')) text.removeAttribute('data-tabcloser-hidden-text');
     if (text.nextElementSibling?.classList.contains('tabcloser-quote')) text.nextElementSibling.remove();
   }
 }
@@ -569,7 +569,7 @@ function restoreAllArticleText() {
   document.querySelectorAll('.tabcloser-quote').forEach(quote => quote.remove());
   document.querySelectorAll('[data-tabcloser-quoted]').forEach(text => {
     delete text.dataset.tabcloserQuoted;
-    if (!text.hasAttribute('data-tabcloser-manual-text')) text.classList.remove('tabcloser-hidden-text');
+    if (!text.hasAttribute('data-tabcloser-manual-text')) text.removeAttribute('data-tabcloser-hidden-text');
   });
 }
 
@@ -703,7 +703,7 @@ function clearAllStates() {
   closeLightbox();
   restoreAllArticleText();
   document.querySelectorAll('.tabcloser-media-overlay').forEach(overlay => overlay.remove());
-  document.querySelectorAll('.tabcloser-overlay-host').forEach(clearOverlayHost);
+  document.querySelectorAll('[data-tabcloser-overlay-host]').forEach(clearOverlayHost);
   document.querySelectorAll('[data-tabcloser-like-blocked]').forEach(article => article.removeAttribute('data-tabcloser-like-blocked'));
   document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
     restoreRootPlayback(root);
@@ -1765,9 +1765,9 @@ function blockPendingOrProtectedActivation(event) {
       return;
     }
   }
-  // .tabcloser-overlay-host guards the full clickable cell, which extends
+  // [data-tabcloser-overlay-host] guards the full clickable cell, which extends
   // beyond the media root that carries the state attribute.
-  const root = event.target.closest('[data-tabcloser-media-state="pending"], [data-tabcloser-media-state="protected"], .tabcloser-overlay-host');
+  const root = event.target.closest('[data-tabcloser-media-state="pending"], [data-tabcloser-media-state="protected"], [data-tabcloser-overlay-host]');
   if (!root) return;
   event.preventDefault();
   event.stopImmediatePropagation();
