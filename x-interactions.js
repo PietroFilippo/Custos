@@ -215,8 +215,9 @@
       return section;
     }
     if (!(snapshot.safeMarksPerDay > 0)) {
-      if (snapshot.allowanceLocked) return null;
-      status.textContent = 'If this ' + noun + ' is harmless, you can turn on “Not sensitive” marks in Custos settings. A mark takes effect a day later.';
+      status.textContent = snapshot.allowanceLocked
+        ? '“Not sensitive” marks are off, and a lock keeps them off' + (snapshot.allowanceLockUntil ? ' until ' + formatLockDate(snapshot.allowanceLockUntil) : '') + '.'
+        : 'If this ' + noun + ' is harmless, you can turn on “Not sensitive” marks in Custos settings. A mark takes effect a day later.';
       return section;
     }
     if (!video && decision?.scores && !TabCloserXVerdict.markEligible(decision.scores)) {
@@ -432,7 +433,21 @@
   window.addEventListener('blur', stopReveal);
   window.addEventListener('pagehide', stopReveal);
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && panel) { event.preventDefault(); closePanel(); } }, true);
+  // Which manual hides make sense for what was right-clicked: none for media
+  // that is already covered, or for post text that is already hidden or
+  // replaced by a quote.
+  function contextMenuState() {
+    const target = contextTarget?.isConnected ? contextTarget : null;
+    const root = target && mediaRootFor(target);
+    const media = !!root && !!stableMediaVerificationKey(root) && root.dataset.tabcloserMediaState !== 'protected';
+    const article = target?.closest('article');
+    const statusId = target && statusIdFor(target);
+    const texts = article && statusId ? [...article.querySelectorAll('[data-testid="tweetText"]')].filter(text => statusIdFor(text) === statusId) : [];
+    const text = texts.some(item => !textHidden(item) && item.dataset.tabcloserQuoted !== 'yes' && !item.classList.contains('tabcloser-hidden-text'));
+    return { media, text };
+  }
   browser.runtime.onMessage.addListener(message => {
+    if (message?.type === 'xContextMenuState') return Promise.resolve(contextMenuState());
     if (message?.type === 'xControlsChanged') applySnapshot(message.snapshot);
     if (message?.type === 'xManualHideSelection') {
       const target = contextTarget;
