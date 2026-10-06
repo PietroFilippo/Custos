@@ -3,7 +3,10 @@
 (() => {
   let snapshot = { posts: [], media: [], revealDailySec: 0, locked: false };
   let posts = new Set(), texts = new Set(), media = new Set();
-  let contextTarget = null, panel = null, panelRoot = null, allowanceText = null, holdButton = null;
+  // "Not sensitive" marks: active ones release their image; pending ones show
+  // when they take effect.
+  let safeActive = new Set(), safePending = new Map();
+  let contextTarget = null, panel = null, panelRoot = null, allowanceText = null, holdButton = null, meter = null;
   let holding = false, requestGeneration = 0, lease = null, revealTimer = null, refreshTimer = null;
   let allowanceTimer = null;
   let revealStarted = 0, revealDuration = 0, revealPage = '';
@@ -16,6 +19,9 @@
 
   function manuallyHidden(root) {
     return textHidden(root) || posts.has(statusIdFor(root)) || media.has(stableMediaVerificationKey(root));
+  }
+  function markedNotSensitive(root) {
+    return safeActive.has(stableMediaVerificationKey(root));
   }
   function button(label, action) {
     const element = document.createElement('button');
@@ -34,14 +40,18 @@
       });
     }
   }
+  // The reason section of "Why hidden?": a short kind label plus the detail.
   function explanation(root) {
-    if (textHidden(root)) return 'You chose to hide this post’s text. The choice is saved on this device.';
+    if (textHidden(root)) return { kind: 'Hidden by you', text: 'You chose to hide this post’s text. The choice is saved on this device.' };
+    const profile = globalThis.TabCloserXProfile?.explain?.(root);
+    if (profile) return profile;
     const reason = root.dataset.tabcloserMediaReason;
-    if (reason === 'manual') return 'You chose to hide this image or video. The choice is saved on this device.';
-    if (reason === 'metadata') return 'X supplied a sensitive-content label or warning for this media, post, or author.';
-    if (reason !== 'visual') return 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while TabCloser retries when possible.';
+    if (reason === 'manual') return { kind: 'Hidden by you', text: 'You chose to hide this image or video. The choice is saved on this device.' };
+    if (reason === 'group') return { kind: 'Same post', text: 'Another image or video in this post was hidden, and “Hide all of a post’s media when one is hidden” is on.' };
+    if (reason === 'metadata') return { kind: 'X label', text: 'X supplied a sensitive-content label or warning for this media, post, or author. Labels come from X or the poster and can be wrong.' };
+    if (reason !== 'visual') return { kind: 'Could not check', text: 'The media could not be checked (' + (reason || 'unknown error') + '). It stays covered while Custos retries when possible.' };
     const decision = TabCloserXCoordinator.decisionFor(root);
-    if (!decision) return 'The on-device model flagged this media during an earlier check in this page. Models can make mistakes.';
+    if (!decision) return { kind: 'On-device classifier', text: 'The on-device model flagged this media during an earlier check in this page. Models can make mistakes.' };
     let text = 'The on-device model flagged the ' + decision.source + '.';
     if (Number.isFinite(decision.adultScore)) text += ' Score ' + decision.adultScore.toFixed(3) + ', cutoff ' + decision.threshold.toFixed(2) + ' (' + decision.sensitivity + ').';
     if (decision.frames?.length) {
@@ -50,7 +60,7 @@
         decision.frames.map(frame => frame.t + 's: ' + frame.squash + (frame.crop == null ? '' : ' / crop ' + frame.crop)).join('; ') + '.';
     }
     if (decision.fallback) text += ' ' + decision.fallback + '; the thumbnail was used as a fallback.';
-    return text + ' Scores are model signals, not certainty. Harmless media can be flagged.';
+    return { kind: 'On-device classifier', text: text + ' Scores are model signals, not certainty. Harmless media can be flagged.' };
   }
   function decorate(root, state) {
     if (state !== 'protected') return;
@@ -67,31 +77,51 @@
     stopReveal();
     clearInterval(allowanceTimer); allowanceTimer = null;
     const previousRoot = panelRoot;
-    panel?.remove(); panel = null; panelRoot = null; holdButton = null; allowanceText = null;
-    (manualTexts.get(previousRoot) || overlayFor(previousRoot || document.documentElement))?.querySelector('button')?.focus();
+    panel?.remove(); panel = null; panelRoot = null; holdButton = null; allowanceText = null; meter = null;
+    // Return keyboard focus to the control that opened the panel without
+    // scrolling the page back to it: the reader may have moved on.
+    (manualTexts.get(previousRoot) || overlayFor(previousRoot || document.documentElement))?.querySelector('button')?.focus({ preventScroll: true });
   }
-  function messagePanel(text) {
+  function panelSection(...children) {
+    const section = document.createElement('div');
+    section.className = 'tabcloser-panel-section';
+    section.append(...children);
+    return section;
+  }
+  function paragraph(text, className) {
+    const element = document.createElement('p');
+    if (className) element.className = className;
+    element.textContent = text;
+    return element;
+  }
+  function messagePanel(text, title = 'Custos', kind = '') {
     closePanel();
     panel = document.createElement('section');
     panel.className = 'tabcloser-controls tabcloser-control-panel';
     isolateControls(panel);
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'TabCloser');
-    const title = document.createElement('strong'); title.textContent = 'TabCloser';
-    const content = document.createElement('p'); content.textContent = text;
-    panel.append(title, button('Close', closePanel), content);
+    panel.setAttribute('aria-label', title);
+    const head = document.createElement('header');
+    head.className = 'tabcloser-panel-head';
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    head.append(heading, button('Close', closePanel));
+    const label = kind ? paragraph(kind, 'tabcloser-kind') : null;
+    panel.append(head, panelSection(...[label, paragraph(text)].filter(Boolean)));
     document.documentElement.appendChild(panel);
-    panel.querySelector('button').focus();
+    panel.querySelector('button').focus({ preventScroll: true });
   }
+  const perPostSec = source => source?.revealPerPostSec || (source?.postLimitMs ? source.postLimitMs / 1000 : 3);
   function renderAllowance(result, root) {
     const available = Math.floor(Math.min(result.dailyMs || 0, result.postMs || 0));
     allowanceText.textContent = result.revealDailySec <= 0
-      ? 'Temporary reveals are off. Set a daily allowance in TabCloser settings.'
+      ? 'Temporary reveals are off. Set a daily allowance in Custos settings.'
       : result.dailyMs < 1
         ? 'Daily allowance used up. Reveals return at local midnight.'
         : result.postMs < 1
-          ? 'This post has used its three seconds today. It can be revealed again after local midnight.'
-          : 'Up to ' + seconds(available) + 's available for this post · ' + seconds(result.dailyMs) + 's remaining today. Resets at local midnight.';
+          ? 'This post has used its ' + perPostSec(result) + ' seconds today. It can be revealed again after local midnight.'
+          : seconds(available) + ' s left for this post · ' + seconds(result.dailyMs) + ' s left today · resets at local midnight';
+    meter.style.width = (result.revealDailySec > 0 ? Math.min(100, (available / (result.postLimitMs || 3000)) * 100) : 0) + '%';
     holdButton.disabled = !statusIdFor(root) || result.revealDailySec <= 0 || available < 1;
   }
   async function updateAllowance(root) {
@@ -101,20 +131,27 @@
     renderAllowance(result, root);
   }
   function openPanel(root) {
-    messagePanel(explanation(root));
+    const reason = explanation(root);
+    messagePanel(reason.text, 'Why hidden?', reason.kind);
     panelRoot = root;
-    const details = document.createElement('p');
-    details.className = 'tabcloser-control-note';
-    details.textContent = 'Hold to reveal the post’s hidden media and text for up to three seconds. Videos remain paused. Let go or leave this tab to hide again.';
-    allowanceText = document.createElement('p');
+    const heading = document.createElement('h4');
+    heading.textContent = 'Temporary reveal';
+    const details = paragraph('Hold the button to show this post’s hidden media and text for up to ' + perPostSec(snapshot) + ' seconds a day. Videos stay paused. Let go or leave this tab to hide it again.', 'tabcloser-control-note');
+    const track = document.createElement('div');
+    track.className = 'tabcloser-meter';
+    track.setAttribute('aria-hidden', 'true');
+    meter = document.createElement('div');
+    meter.style.width = '0%';
+    track.appendChild(meter);
+    allowanceText = paragraph('Checking allowance…', 'tabcloser-allowance');
     allowanceText.setAttribute('role', 'status');
-    allowanceText.textContent = 'Checking allowance…';
     holdButton = button('Hold to reveal');
+    holdButton.className = 'tabcloser-hold';
     holdButton.disabled = true;
     holdButton.addEventListener('pointerdown', event => {
       if (event.button !== 0) return;
       event.preventDefault();
-      holdButton.focus();
+      holdButton.focus({ preventScroll: true });
       startReveal(root);
     });
     holdButton.addEventListener('pointerleave', stopReveal);
@@ -125,7 +162,10 @@
     });
     holdButton.addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) stopReveal(); });
     holdButton.addEventListener('blur', stopReveal);
-    panel.append(details, allowanceText, holdButton);
+    const reveal = panelSection(heading, details, track, allowanceText, holdButton);
+    panel.appendChild(reveal);
+    const markSection = notSensitiveSection(root);
+    if (markSection) panel.appendChild(markSection);
     if (manuallyHidden(root)) {
       const scope = posts.has(statusIdFor(root)) ? 'post' : textHidden(root) ? 'text' : 'media';
       const key = scope !== 'media' ? statusIdFor(root) : stableMediaVerificationKey(root);
@@ -134,15 +174,84 @@
         if (result?.ok) { applySnapshot(result); closePanel(); }
         else allowanceText.textContent = result?.error || 'Unable to remove this hide.';
       });
+      undo.className = 'tabcloser-secondary';
       undo.disabled = snapshot.locked;
       undo.title = snapshot.locked ? 'X protection is locked' : '';
-      panel.appendChild(undo);
+      reveal.appendChild(undo);
     }
     updateAllowance(root);
     allowanceTimer = setInterval(() => { if (!lease && !holding && panelRoot === root) updateAllowance(root); }, 1000);
   }
+  // "Not sensitive" marks are offered only for an image the classifier hid.
+  // A mark takes effect a day later and only for borderline detections; the
+  // background re-checks the image before accepting it.
+  function notSensitiveSection(root) {
+    if (manuallyHidden(root) || root.dataset.tabcloserMediaReason !== 'visual') return null;
+    const decision = TabCloserXCoordinator.decisionFor(root);
+    const key = stableMediaVerificationKey(root);
+    const source = sourceValues(root).find(value => value && !value.startsWith('blob:'));
+    if (!key || !source || (decision && decision.source !== 'image') || mediaElementsWithin(root, 'video').length ||
+        !/^https:\/\/pbs\.twimg\.com\//.test(source) || /_video_thumb\//.test(source)) return null;
+    const heading = document.createElement('h4');
+    heading.textContent = 'Not sensitive?';
+    const status = paragraph('', 'tabcloser-control-note');
+    status.setAttribute('role', 'status');
+    const section = panelSection(heading, status);
+    const pendingAt = safePending.get(key);
+    if (pendingAt) {
+      status.textContent = 'Marked not sensitive. It will show from ' + formatLockDate(pendingAt) + '.';
+      const cancel = button('Cancel mark', async () => {
+        const result = await send({ type: 'xControlUnmarkSafe', key }).catch(() => null);
+        if (result?.ok) applySnapshot(result);
+        else status.textContent = result?.error || 'Unable to cancel the mark.';
+      });
+      cancel.className = 'tabcloser-secondary';
+      section.appendChild(cancel);
+      return section;
+    }
+    if (!(snapshot.safeMarksPerDay > 0)) {
+      if (snapshot.allowanceLocked) return null;
+      status.textContent = 'If this image is harmless, you can turn on “Not sensitive” marks in Custos settings. A mark takes effect a day later.';
+      return section;
+    }
+    if (decision?.scores && !TabCloserXVerdict.markEligible(decision.scores)) {
+      status.textContent = 'This detection is too confident to mark as not sensitive.';
+      return section;
+    }
+    const left = snapshot.safeMarksLeft || 0;
+    if (left <= 0) {
+      status.textContent = 'No “Not sensitive” marks left today.';
+      return section;
+    }
+    status.textContent = 'If the classifier got this wrong, mark it. The image stays hidden for 24 hours, then shows on this device. ' +
+      left + ' of ' + snapshot.safeMarksPerDay + ' marks left today.';
+    const mark = button('Mark not sensitive…');
+    mark.className = 'tabcloser-secondary';
+    mark.addEventListener('click', async () => {
+      // Two steps, like "Unblock now": the first click only asks.
+      if (mark.dataset.confirm !== 'yes') {
+        mark.dataset.confirm = 'yes';
+        mark.textContent = 'Confirm: show it in 24 hours';
+        return;
+      }
+      mark.disabled = true;
+      status.textContent = 'Checking the image again…';
+      const result = await send({ type: 'xControlMarkSafe', key, url: source }).catch(() => null);
+      if (result?.ok) {
+        applySnapshot(result);
+        messagePanel('Marked not sensitive. This image will show from ' + formatLockDate(result.activeAt) +
+          '. Undo it in “Why hidden?” or in Custos settings.', 'Custos');
+        return;
+      }
+      if (!mark.isConnected) return;
+      status.textContent = result?.error || 'Unable to save the mark.';
+      mark.remove();
+    });
+    section.appendChild(mark);
+    return section;
+  }
   async function startReveal(root) {
-    if (!holdButton || holdButton.disabled || holding || lease || document.visibilityState !== 'visible' || !document.hasFocus() || !root.isConnected || (root.dataset.tabcloserMediaState !== 'protected' && !textHidden(root))) return;
+    if (!holdButton || holdButton.disabled || holding || lease || document.visibilityState !== 'visible' || !document.hasFocus() || !root.isConnected || (root.dataset.tabcloserMediaState !== 'protected' && !textHidden(root) && !globalThis.TabCloserXProfile?.collapsed(root))) return;
     holding = true;
     const generation = ++requestGeneration;
     const page = location.href;
@@ -190,6 +299,10 @@
       mark(overlayFor(root), 'data-tabcloser-overlay-revealed');
       for (const player of mediaPlayersWithin(root)) blockMediaPlayback(player);
     });
+    // A collapsed reply from a flagged account unfolds for the same lease.
+    document.querySelectorAll('article[data-tabcloser-collapsed]').forEach(article => {
+      if (statusIdFor(article) === lease.postId) mark(article, 'data-tabcloser-collapse-revealed');
+    });
     document.querySelectorAll('.tabcloser-hidden-text, .tabcloser-quote, .tabcloser-manual-text-notice').forEach(node => {
       if (statusIdFor(node) === lease.postId) mark(node, node.classList.contains('tabcloser-hidden-text') ? 'data-tabcloser-text-revealed' : 'data-tabcloser-quote-revealed');
     });
@@ -198,7 +311,7 @@
     holding = false; requestGeneration += 1;
     clearInterval(revealTimer); revealTimer = null;
     for (const node of marked) {
-      for (const name of ['data-tabcloser-revealed', 'data-tabcloser-overlay-revealed', 'data-tabcloser-text-revealed', 'data-tabcloser-quote-revealed']) node.removeAttribute(name);
+      for (const name of ['data-tabcloser-revealed', 'data-tabcloser-overlay-revealed', 'data-tabcloser-text-revealed', 'data-tabcloser-quote-revealed', 'data-tabcloser-collapse-revealed']) node.removeAttribute(name);
       node.style.removeProperty('--tabcloser-peek-ms');
     }
     marked.clear();
@@ -206,8 +319,31 @@
     if (previous) send({ type: 'xControlRevealEnd', token: previous.token, postId: previous.postId })
       .catch(() => {}).finally(() => { if (panelRoot) updateAllowance(panelRoot); });
   }
+  // Elements X added since the last refresh. A full refresh (new choices,
+  // settings change) scans the document; otherwise only these are scanned.
+  const pendingScan = new Set();
+  let fullScan = true;
+  function scanTargets() {
+    if (fullScan) return [document];
+    const connected = [...pendingScan].filter(node => node.isConnected);
+    return connected.filter(node => !connected.some(other => other !== node && other.contains(node)));
+  }
+  function textsWithin(target) {
+    const found = new Set(target.querySelectorAll ? target.querySelectorAll('[data-testid="tweetText"]') : []);
+    const own = target instanceof Element ? target.closest('[data-testid="tweetText"]') : null;
+    if (own) found.add(own);
+    return found;
+  }
   function refresh() {
+    fullScan = true;
+    runRefresh();
+  }
+  function runRefresh() {
     refreshTimer = null;
+    const targets = scanTargets();
+    const full = fullScan;
+    fullScan = false;
+    pendingScan.clear();
     for (const [text, notice] of manualTexts) {
       if (!text.isConnected || !textHidden(text)) {
         notice.remove(); manualTexts.delete(text);
@@ -216,7 +352,7 @@
       }
     }
     if (posts.size || texts.size) {
-      for (const text of document.querySelectorAll('[data-testid="tweetText"]')) {
+      for (const text of targets.flatMap(target => [...textsWithin(target)])) {
         if (!textHidden(text)) continue;
         text.dataset.tabcloserManualText = '';
         text.classList.add('tabcloser-hidden-text');
@@ -242,14 +378,16 @@
       }
     }
     if (posts.size || media.size) {
-      const roots = new Set(candidateRootsWithin(document));
+      const roots = new Set(targets.flatMap(target => candidateRootsWithin(target)));
       for (const root of roots) {
         if (!manuallyHidden(root)) continue;
         manualRoots.add(root);
         if (root.dataset.tabcloserMediaReason !== 'manual' || !overlayFor(root)) setRootState(root, 'protected', 'manual');
       }
     }
-    document.querySelectorAll('[data-tabcloser-media-state="protected"]').forEach(root => decorate(root, 'protected'));
+    // The coordinator decorates covers as it draws them; a full pass is only
+    // a safety net for covers drawn before this script was ready.
+    if (full) document.querySelectorAll('[data-tabcloser-media-state="protected"]').forEach(root => decorate(root, 'protected'));
     if (lease) {
       if (!panelRoot?.isConnected || revealPage !== location.href) stopReveal();
       else paintReveal();
@@ -260,7 +398,24 @@
     if (panelRoot) closePanel();
     snapshot = next;
     posts = new Set(next.posts || []); texts = new Set(next.texts || []); media = new Set(next.media || []);
+    const previousActive = safeActive;
+    const marks = Array.isArray(next.safeMarks) ? next.safeMarks : [];
+    safeActive = new Set(marks.filter(mark => mark.active).map(mark => mark.key));
+    safePending = new Map(marks.filter(mark => !mark.active).map(mark => [mark.key, mark.activeAt]));
     refresh();
+    refreshMarked(previousActive);
+  }
+  // Re-check media whose mark just took effect or was removed. The cover
+  // stays up, as a pending check, until the new verdict arrives.
+  function refreshMarked(previousActive) {
+    const changed = new Set([...safeActive].filter(key => !previousActive.has(key)));
+    for (const key of previousActive) if (!safeActive.has(key)) changed.add(key);
+    if (!changed.size) return;
+    document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
+      if (!changed.has(stableMediaVerificationKey(root)) || manuallyHidden(root)) return;
+      TabCloserXCoordinator.invalidate(root);
+      discoverRoot(root);
+    });
   }
   document.addEventListener('contextmenu', event => {
     contextTarget = event.target instanceof Element ? event.target : null;
@@ -283,17 +438,28 @@
         messagePanel('Choose a post, image, or video with a stable X link. Avatars and profile banners are not supported by manual hiding yet.'); return;
       }
       send({ type: 'xControlHide', scope: message.scope, key }).then(result => {
-        if (result?.ok) { applySnapshot(result); messagePanel('Saved. This ' + (message.scope === 'text' ? 'post’s text' : 'image or video') + ' will stay hidden. Manage manual hides in TabCloser settings.'); }
+        if (result?.ok) { applySnapshot(result); messagePanel('Saved. This ' + (message.scope === 'text' ? 'post’s text' : 'image or video') + ' will stay hidden. Manage manual hides in Custos settings.'); }
         else messagePanel(result?.error || 'Unable to save the manual hide.');
       }).catch(() => messagePanel('Unable to save the manual hide.'));
     }
   });
   new MutationObserver(mutations => {
     if (!posts.size && !texts.size && !media.size && !lease) return;
-    if (!mutations.some(mutation => !extensionOwnedElement(mutation.target))) return;
+    let relevant = false;
+    for (const mutation of mutations) {
+      if (extensionOwnedElement(mutation.target)) continue;
+      relevant = true;
+      // A changed src/href can change a media identity; added nodes may be
+      // new posts. Text-only churn (counters, times) needs no scan.
+      // A changed link can mean X reused this post's element for another
+      // post: rescan the whole post, including its text.
+      if (mutation.type === 'attributes') pendingScan.add(mutation.target.closest?.('article') || mutation.target);
+      else for (const node of mutation.addedNodes) if (node instanceof Element && !extensionOwnedElement(node)) pendingScan.add(node);
+    }
+    if (!relevant) return;
     if (lease && (!panelRoot?.isConnected || statusIdFor(panelRoot) !== lease.postId || revealPage !== location.href)) stopReveal();
-    if (refreshTimer == null) refreshTimer = setTimeout(refresh, 50);
+    if (refreshTimer == null && (pendingScan.size || lease)) refreshTimer = setTimeout(runRefresh, 50);
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'poster', 'href'] });
-  globalThis.TabCloserXInteractions = { manuallyHidden, decorate, refresh, stopReveal };
+  globalThis.TabCloserXInteractions = { manuallyHidden, markedNotSensitive, decorate, refresh, stopReveal, openPanel };
   send({ type: 'xControlGet' }).then(result => { if (result?.ok) applySnapshot(result); else refresh(); }).catch(() => refresh());
 })();

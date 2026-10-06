@@ -3,7 +3,7 @@ const state = {
   rules: [],          // [{ id, domain, closeAfterSec, blockAfterClose, blockDurationSec, enabled }]
   accumSec: {},       // { [normalizedDomain]: accumulated active seconds }
   blocks: {},         // { [normalizedDomain]: { until: epochMs } }
-  adultSites: { enabled: false, lockUntil: null },
+  adultSites: { enabled: false, lockUntil: null, safeSearch: false },
   // Two tiers: 'labeled' hides only media X itself marks mature; 'model' adds
   // the on-device classifier. model implies labeled (enable and lock).
   xProtection: {
@@ -11,8 +11,13 @@ const state = {
     model: { enabled: false, lockUntil: null, sensitivity: 'balanced' },
     replaceText: false, // swap censored post text for a Catholic quote
     blockLike: false,   // prevent liking posts whose media is censored
+    sacredArt: false,   // presentation only: cover hidden media with a painting instead of the blur
+    groupMedia: false,  // hide all of a post's media when one item is hidden
     revealDailySec: 0,  // opt-in; shared across all X tabs
+    revealPerPostSec: 3, // daily reveal time per post, 3-10 s
     revealLockUntil: null,
+    safeMarksPerDay: 0, // "Not sensitive" marks allowed per day (0-5); 0 turns them off
+    profile: null,      // see normalizeXProfile
   },
   focus: { tabId: null, domain: null, enteredAt: null }, // not persisted
 };
@@ -22,6 +27,7 @@ let bootPromise = null;
 let stateQueue = Promise.resolve();
 let closeTimerGeneration = 0;
 let xUserControls;
+let stateLoaded = false;
 let adultList = null, adultListError = null;
 
 // Browser notifications can overlap across awaits. Serialize timer/rule state,
@@ -31,7 +37,7 @@ function enqueueStateChange(work) {
     if (bootPromise) await bootPromise;
     return work();
   });
-  stateQueue = job.catch(error => console.warn('[TabCloser] State update failed', error));
+  stateQueue = job.catch(error => console.warn('[Custos] State update failed', error));
   return job;
 }
 
@@ -41,12 +47,22 @@ function finiteOrNull(value) {
 }
 
 async function loadState() {
-  const data = await browser.storage.local.get(['rules', 'accumSec', 'blocks', 'xProtection', 'xUserControls', 'adultSites']);
+  const data = await browser.storage.local.get(['rules', 'accumSec', 'blocks', 'xProtection', 'xUserControls', 'adultSites', 'serverClock']);
+  // A server time seen before a restart, aged by the device clock until a
+  // fresh response arrives.
+  const savedClock = data.serverClock;
+  if (!serverClock && Number.isFinite(savedClock?.server) && Number.isFinite(savedClock?.wall)) {
+    serverClock = { server: savedClock.server, wall: savedClock.wall, mono: null };
+  }
   xUserControls = TabCloserXUserControls.normalize(data.xUserControls);
   state.rules = data.rules ?? [];
   state.accumSec = data.accumSec ?? {};
   state.blocks = data.blocks ?? {};
-  state.adultSites = { enabled: data.adultSites?.enabled === true, lockUntil: finiteOrNull(data.adultSites?.lockUntil) };
+  state.adultSites = {
+    enabled: data.adultSites?.enabled === true,
+    lockUntil: finiteOrNull(data.adultSites?.lockUntil),
+    safeSearch: data.adultSites?.safeSearch === true,
+  };
   const raw = data.xProtection ?? {};
   // Migrate the legacy single-toggle shape { enabled, disableLockedUntil }.
   const legacyEnabled = raw.enabled === true;
@@ -59,12 +75,17 @@ async function loadState() {
     model: {
       enabled: raw.model?.enabled === true || legacyEnabled,
       lockUntil: finiteOrNull(raw.model?.lockUntil) ?? legacyLock,
-      sensitivity: SENSITIVITY_RANK[raw.model?.sensitivity] != null ? raw.model.sensitivity : 'balanced',
+      sensitivity: ownKey(SENSITIVITY_RANK, raw.model?.sensitivity) ? raw.model.sensitivity : 'balanced',
     },
     replaceText: raw.replaceText === true,
     blockLike: raw.blockLike === true,
+    sacredArt: raw.sacredArt === true,
+    groupMedia: raw.groupMedia === true,
     revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
+    revealPerPostSec: TabCloserXUserControls.postLimitSec(raw.revealPerPostSec),
+    safeMarksPerDay: TabCloserXUserControls.safeMarksPerDay(raw.safeMarksPerDay),
+    profile: normalizeXProfile(raw.profile),
   };
   // Obsolete learning data is optional cleanup and must never abort startup.
   browser.storage.local.remove(['xSensitiveTweetCache', 'xRestrictedAuthorCache']).catch(() => {});
@@ -72,6 +93,30 @@ async function loadState() {
 
 // Higher rank censors more; loosening is refused while the model tier is locked.
 const SENSITIVITY_RANK = { lenient: 0, balanced: 1, strict: 2 };
+// Enum lookups accept own keys only: "constructor" or "__proto__" would
+// otherwise pass validation and compare as NaN, slipping past lock checks.
+const ownKey = (table, key) => typeof key === 'string' && Object.hasOwn(table, key);
+
+// Profile protection works from account flags kept only in the X page's
+// memory. Image scope applies to pictures and banners; names and reply
+// collapse only ever apply to flagged accounts.
+const PROFILE_IMAGE_RANK = { off: 0, flagged: 1, everyone: 2 };
+const PROFILE_SWITCHES = ['avatars', 'banners', 'markers', 'names', 'collapse'];
+function normalizeXProfile(raw) {
+  return {
+    images: ownKey(PROFILE_IMAGE_RANK, raw?.images) ? raw.images : 'off',
+    avatars: raw?.avatars !== false,
+    banners: raw?.banners !== false,
+    markers: raw?.markers === true,
+    names: raw?.names === true,
+    alias: raw?.alias === 'plain' ? 'plain' : 'virtue',
+    collapse: raw?.collapse === true,
+  };
+}
+function xProfileActive() {
+  const profile = state.xProtection.profile;
+  return !!profile && ((profile.images !== 'off' && (profile.avatars || profile.banners)) || profile.names || profile.collapse);
+}
 
 const xContentScriptVersion = 'media-controls-v2';
 const xTabUrlPatterns = [
@@ -90,6 +135,7 @@ const xContentScriptFiles = [
   'catholic-quotes.js',
   'x-protection-v2.js',
   'x-interactions.js',
+  'x-profile-protection.js',
 ];
 
 async function persist() {
@@ -102,8 +148,47 @@ async function persist() {
   });
 }
 
+// === Trusted time ===
+// Locks, cooldowns, and the reveal day must not end early because the system
+// clock was moved forward. Servers' Date headers give an independent clock.
+// Trusted time is never later than the device clock (plus a minute of slack
+// for ordinary skew), so it can only make a lock last longer, never shorter.
+let serverClock = null; // { server, wall, mono }
+const monotonic = () => (typeof performance === 'object' ? performance.now() : null);
+function trustedNow() {
+  const now = Date.now();
+  if (!serverClock) return now;
+  const mono = monotonic();
+  const elapsed = serverClock.mono != null && mono != null ? mono - serverClock.mono : now - serverClock.wall;
+  return Math.min(now, Math.round(serverClock.server + Math.max(0, elapsed) + 60000));
+}
+let serverClockSavedAt = 0;
+function recordServerTime(details) {
+  if (details.fromCache || (serverClock?.mono != null && monotonic() - serverClock.mono < 60000)) return;
+  const header = details.responseHeaders?.find(item => item.name.toLowerCase() === 'date');
+  const server = header ? Date.parse(header.value) : NaN;
+  if (!Number.isFinite(server)) return;
+  serverClock = { server, wall: Date.now(), mono: monotonic() };
+  if (Date.now() - serverClockSavedAt > 600000) {
+    serverClockSavedAt = Date.now();
+    browser.storage.local.set({ serverClock: { server, wall: serverClock.wall } }).catch(() => {});
+  }
+}
+browser.webRequest.onHeadersReceived?.addListener(recordServerTime,
+  { urls: ['https://*/*'], types: ['main_frame', 'sub_frame', 'xmlhttprequest'] }, ['responseHeaders']);
+
 function isLockActive(until) {
-  return Number.isFinite(until) && until > Date.now();
+  return Number.isFinite(until) && until > trustedNow();
+}
+
+// One validator for every lock: whole minutes, never overflowing to a value
+// that isLockActive would treat as "no lock".
+const MAX_LOCK_UNTIL = 8640000000000000;
+function lockDeadline(durationSec) {
+  const seconds = Math.round(Number(durationSec));
+  if (!Number.isFinite(seconds) || seconds < 60) return null;
+  const until = Math.round(trustedNow() + seconds * 1000);
+  return Number.isSafeInteger(until) && until <= MAX_LOCK_UNTIL ? until : null;
 }
 
 async function notifyXProtection() {
@@ -135,13 +220,13 @@ async function ensureXContentScriptInTab(tab) {
       target: { tabId: tab.id },
       files: xContentScriptFiles,
     });
-    console.debug('[TabCloser DEBUG lifecycle-v1]', JSON.stringify({
+    console.debug('[Custos DEBUG lifecycle-v1]', JSON.stringify({
       event: 'existing-tab-restored',
       tabId: tab.id,
       version: xContentScriptVersion,
     }));
   } catch (error) {
-    console.warn('[TabCloser] Could not restore X protection in an existing tab', {
+    console.warn('[Custos] Could not restore X protection in an existing tab', {
       tabId: tab.id,
       error: String(error?.message || error),
     });
@@ -153,7 +238,7 @@ async function ensureExistingXTabsProtected() {
   try {
     tabs = await browser.tabs.query({ url: xTabUrlPatterns });
   } catch (error) {
-    console.warn('[TabCloser] Could not find existing X tabs for protection restoration', {
+    console.warn('[Custos] Could not find existing X tabs for protection restoration', {
       error: String(error?.message || error),
     });
     return;
@@ -193,22 +278,61 @@ async function enforceAdultSites() {
   }));
 }
 
+// SafeSearch: search engines always get their strictest filter parameter,
+// including image and video search. Returns a redirect URL, or null when the
+// request already asks for it. DuckDuckGo's HTML and Lite versions post the
+// query in the form body, so it is carried into the redirect URL.
+const safeSearchRules = [
+  { host: /^(?:www\.)?google\.(?:com|[a-z]{2,3}|com?\.[a-z]{2})$/, path: /^\/search$/, key: 'safe', value: 'active' },
+  { host: /^(?:www\.)?bing\.com$/, path: /^\/(?:images\/|videos\/)?search$/, key: 'adlt', value: 'strict' },
+  { host: /^(?:html\.|lite\.)?duckduckgo\.com$/, path: /^\/(?:html\/?|lite\/?)?$/, key: 'kp', value: '1', needsQuery: true },
+  { host: /^search\.brave\.com$/, path: /^\/(?:search|images|videos|news)$/, key: 'safesearch', value: 'strict' },
+];
+function safeSearchUrl(value, formData) {
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  const host = url.hostname.toLowerCase();
+  const rule = safeSearchRules.find(candidate => candidate.host.test(host) && candidate.path.test(url.pathname));
+  if (!rule) return null;
+  if (rule.needsQuery && !url.searchParams.has('q')) {
+    const postedQuery = formData?.q?.[0];
+    if (typeof postedQuery !== 'string' || !postedQuery) return null;
+    url.searchParams.set('q', postedQuery);
+  } else if (url.searchParams.get(rule.key) === rule.value) {
+    return null;
+  }
+  url.searchParams.set(rule.key, rule.value);
+  return url.href;
+}
+
 // Firefox holds navigation while the event page loads its bundled list. Do not
 // enqueue this on stateQueue: a pending settings/tabs update may depend on it.
 browser.webRequest.onBeforeRequest.addListener(async details => {
+  // "x.com." is "x.com": load the canonical host so no protection is skipped.
+  if (details.type === 'main_frame') {
+    try {
+      const url = new URL(details.url);
+      if (url.hostname.endsWith('.')) {
+        url.hostname = url.hostname.replace(/\.+$/, '');
+        return { redirectUrl: url.href };
+      }
+    } catch {}
+  }
   if (bootPromise) await bootPromise;
   if (!state.adultSites.enabled) return {};
   const domain = adultSiteDomain(details.url);
   if (domain) return details.type === 'sub_frame' ? { cancel: true } : { redirectUrl: adultBlockedUrl(domain) };
+  const safeSearch = state.adultSites.safeSearch && details.type === 'main_frame' ? safeSearchUrl(details.url, details.requestBody?.formData) : null;
+  if (safeSearch) return { redirectUrl: safeSearch };
   // A broken installed list must not silently disable an active locked policy.
   if (!adultList && !await loadAdultList()) return details.type === 'sub_frame'
     ? { cancel: true } : { redirectUrl: adultBlockedUrl(hostFromUrl(details.url) || '') + '&unavailable=1' };
   const retried = adultSiteDomain(details.url);
   return retried ? details.type === 'sub_frame' ? { cancel: true } : { redirectUrl: adultBlockedUrl(retried) } : {};
-}, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['blocking']);
+}, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] }, ['blocking', 'requestBody']);
 
 function findBlock(host) {
-  return activeBlockForHost(state.blocks, host);
+  return activeBlockForHost(state.blocks, host, trustedNow());
 }
 
 // === Focus / active tab ===
@@ -268,7 +392,7 @@ async function triggerAutoClose(domainKey) {
     return;
   }
   if (rule.blockAfterClose) {
-    state.blocks[domainKey] = { until: Date.now() + rule.blockDurationSec * 1000 };
+    state.blocks[domainKey] = { until: trustedNow() + rule.blockDurationSec * 1000 };
   }
   state.accumSec[domainKey] = 0;
   await persist();
@@ -308,7 +432,7 @@ async function handleFocusChange() {
     }
     const blk = findBlock(host);
     const onExtensionPage = tab.url?.startsWith(browser.runtime.getURL(''));
-    if (blk && Date.now() < blk.block.until && !onExtensionPage) {
+    if (blk && trustedNow() < blk.block.until && !onExtensionPage) {
       const url = browser.runtime.getURL(
         `blocked.html?domain=${encodeURIComponent(blk.key)}&until=${blk.block.until}`
       );
@@ -355,6 +479,9 @@ browser.tabs.onRemoved.addListener(tabId => enqueueStateChange(async () => {
 browser.alarms.onAlarm.addListener(alarm => enqueueStateChange(async () => {
   if (alarm.name === 'autoclose') {
     await fireClose();
+  } else if (alarm.name === 'xSafeMarks') {
+    await notifyXControls();
+    await scheduleSafeMarkAlarm();
   } else if (alarm.name === 'commit') {
     // Periodic safety commit so accumulated time isn't lost if event page unloads.
     if (state.focus.domain && state.focus.enteredAt != null) {
@@ -386,7 +513,7 @@ browser.webNavigation.onBeforeNavigate.addListener(details => enqueueStateChange
 
 
 // === X / Twitter sensitive-media metadata ===
-const xMetadataDebugPrefix = '[TabCloser DEBUG metadata-v1]';
+const xMetadataDebugPrefix = '[Custos DEBUG metadata-v1]';
 
 function focalTweetIdFromXGraphqlUrl(value) {
   try {
@@ -407,9 +534,9 @@ function sendXMetadataDiagnostic(tabId, event, details = {}) {
   }).catch(() => {});
 }
 
-// Only operations that can carry tweet/media payloads are worth parsing; misses
-// simply fall back to the poster classifier.
-const xTweetOperationPattern = /Timeline|Tweet|Search|Bookmark|Media|Conversation|List|Detail|Likes|Explore/i;
+// Only operations that can carry tweet/media or account payloads are worth
+// parsing; misses simply fall back to the poster classifier.
+const xTweetOperationPattern = /Timeline|Tweet|Search|Bookmark|Media|Conversation|List|Detail|Likes|Explore|User|Follow|Retweeters|Favoriters|Community|Viewer/i;
 const maxCapturedXGraphqlBytes = 8 * 1024 * 1024;
 
 function observeXGraphqlResponse(details) {
@@ -418,7 +545,10 @@ function observeXGraphqlResponse(details) {
   if (!xTweetOperationPattern.test(operation)) return;
   const focalTweetId = focalTweetIdFromXGraphqlUrl(details.url);
   const debug = /TweetDetail/i.test(operation);
-  if (!state.xProtection.labeled.enabled) {
+  const profileActive = xProfileActive();
+  // Before stored settings load, the defaults would say "off": read the
+  // response anyway and decide once settings are known.
+  if (stateLoaded && !state.xProtection.labeled.enabled && !profileActive) {
     if (debug) sendXMetadataDiagnostic(details.tabId, 'intercept-skipped', {
       operation,
       focalTweetId,
@@ -469,14 +599,18 @@ function observeXGraphqlResponse(details) {
     filter.close();
     if (!captureEnabled) return;
     if (bootPromise) await bootPromise;
+    if (!state.xProtection.labeled.enabled && !xProfileActive()) return;
     responseChunks.push(decoder.decode());
     try {
       const payload = JSON.parse(responseChunks.join(''));
       const metadata = TabCloserXMetadata.extractSensitiveMedia(payload);
-      metadata.videoSourcesByTweetId =
-        TabCloserXMetadata.extractDirectVideoSources(payload);
+      const videoSources = TabCloserXMetadata.directVideoSources(payload);
+      metadata.videoSourcesByTweetId = videoSources.byTweet;
+      metadata.videoSourcesByPoster = videoSources.byPoster;
       const extractedTweetIds = [...metadata.tweetIds];
       const regionalTweetIds = TabCloserXMetadata.extractAgeVerificationTweetIds(payload);
+      // Account flags go only to this tab's page memory; nothing is stored.
+      metadata.accounts = xProfileActive() ? TabCloserXMetadata.extractAccounts(payload) : [];
       if (debug) sendXMetadataDiagnostic(details.tabId, 'intercept-complete', {
         operation,
         focalTweetId,
@@ -488,8 +622,8 @@ function observeXGraphqlResponse(details) {
         directVideoSourceCount: Object.keys(metadata.videoSourcesByTweetId).length,
         signals: TabCloserXMetadata.summarizeSensitivitySignals(payload, focalTweetId),
       });
-      if (metadata.urls.length || metadata.tweetIds.length ||
-          Object.keys(metadata.videoSourcesByTweetId).length) {
+      if (metadata.urls.length || metadata.tweetIds.length || metadata.accounts.length ||
+          Object.keys(metadata.videoSourcesByTweetId).length || Object.keys(metadata.videoSourcesByPoster).length) {
         await browser.tabs.sendMessage(details.tabId, { type: 'xSensitiveMediaMetadata', metadata });
       }
     } catch (error) {
@@ -692,7 +826,7 @@ async function classifyXMedia(msg, sender) {
       const timedOut = /timeout|aborted/i.test(error?.message || error?.name || '');
       if (timedOut) xClassifierDiagnostics.timeouts += 1;
       else xClassifierDiagnostics.errors += 1;
-      console.warn('[TabCloser] X media classification failed; protecting media', {
+      console.warn('[Custos] X media classification failed; protecting media', {
         kind: msg.kind,
         mediaKey: mediaKey.slice(0, 160),
         error: error?.message || String(error),
@@ -713,12 +847,59 @@ function xControlsLocked() {
   return isLockActive(state.xProtection.labeled.lockUntil) || isLockActive(state.xProtection.model.lockUntil);
 }
 
+// The reveal allowance and "Not sensitive" marks share one rule: during an X
+// lock or the allowance lock they can go down but not up.
+function xAllowanceLocked() {
+  return xControlsLocked() || isLockActive(state.xProtection.revealLockUntil);
+}
+
 function xControlSnapshot(postId) {
-  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, Date.now());
+  const now = trustedNow();
+  const remaining = TabCloserXUserControls.remaining(xUserControls, state.xProtection.revealDailySec, postId, now,
+    state.xProtection.revealPerPostSec * 1000);
   return {
     posts: Object.keys(xUserControls.posts), texts: Object.keys(xUserControls.texts), media: Object.keys(xUserControls.media),
-    revealDailySec: state.xProtection.revealDailySec, locked: xControlsLocked(), ...remaining,
+    revealDailySec: state.xProtection.revealDailySec, revealPerPostSec: state.xProtection.revealPerPostSec,
+    locked: xControlsLocked(), ...remaining,
+    safeMarks: TabCloserXUserControls.safeMarkList(xUserControls, now),
+    safeMarksPerDay: state.xProtection.safeMarksPerDay,
+    safeMarksLeft: TabCloserXUserControls.marksLeft(xUserControls, state.xProtection.safeMarksPerDay, now),
+    allowanceLocked: xAllowanceLocked(),
   };
+}
+
+// Wakes X tabs when the next pending mark takes effect. Alarms run on the
+// device clock; trusted time is never later than it, so the alarm cannot fire
+// early, and a late trusted clock simply reschedules.
+async function scheduleSafeMarkAlarm() {
+  const next = TabCloserXUserControls.nextSafeActivation(xUserControls, trustedNow());
+  if (next == null) {
+    await browser.alarms.clear('xSafeMarks').catch(() => {});
+    return;
+  }
+  browser.alarms.create('xSafeMarks', { when: Date.now() + Math.max(0, next - trustedNow()) + 1000 });
+}
+
+// A mark is accepted only for an image the classifier hides with a
+// borderline score. The background scores the image itself, so the page
+// cannot claim a low score.
+async function verifySafeMark(msg, sender) {
+  if (!Number.isInteger(sender?.tab?.id) || !isXPageUrl(sender?.tab?.url || sender?.url || '')) return { ok: false, error: 'Mark images on X.' };
+  const key = msg.key;
+  if (!TabCloserXUserControls.validMedia(key) || typeof msg.url !== 'string') return { ok: false, error: 'This image has no stable identity.' };
+  let url;
+  try { url = new URL(msg.url); } catch { return { ok: false, error: 'This image has no stable identity.' }; }
+  if (url.protocol !== 'https:' || url.hostname !== 'pbs.twimg.com' || /_video_thumb\//.test(url.pathname) ||
+      TabCloserXMetadata.normalizeMediaUrl(url.href) !== key.slice(key.indexOf('|') + 1)) {
+    return { ok: false, error: 'Only images can be marked, not videos or GIFs.' };
+  }
+  if (!state.xProtection.model.enabled) return { ok: false, error: 'Marks apply to the on-device classifier, which is off.' };
+  if (state.xProtection.safeMarksPerDay <= 0) return { ok: false, error: '“Not sensitive” marks are off. Set a daily number in Custos settings.' };
+  const result = await classifyXMedia({ kind: 'url', url: url.href, mediaKey: 'mark|' + key }, sender);
+  if (result.reason !== 'visual') return { ok: false, error: 'Custos could not check this image again. Try later.' };
+  if (result.verdict !== 'protect') return { ok: false, error: 'At your current sensitivity the classifier does not hide this image.' };
+  if (!TabCloserXVerdict.markEligible(result.scores)) return { ok: false, error: 'This detection is too confident to mark as not sensitive.' };
+  return { ok: true };
 }
 
 async function notifyXControls() {
@@ -727,10 +908,10 @@ async function notifyXControls() {
   await Promise.all(tabs.map(tab => browser.tabs.sendMessage(tab.id, { type: 'xControlsChanged', snapshot }).catch(() => {})));
 }
 
-async function handleXControlMessage(msg, sender) {
+async function handleXControlMessage(msg, sender, verified = null) {
   const fromX = Number.isInteger(sender?.tab?.id) && isXPageUrl(sender?.tab?.url || sender.url || '');
   const fromSettings = sender?.url?.split(/[?#]/)[0] === browser.runtime.getURL('options.html');
-  if (!fromX && !fromSettings) return { ok: false, error: 'Unavailable outside X or TabCloser settings.' };
+  if (!fromX && !fromSettings) return { ok: false, error: 'Unavailable outside X or Custos settings.' };
   if (msg.type === 'xControlGet') return { ok: true, ...xControlSnapshot(msg.postId) };
   if (msg.type === 'xControlHide' || msg.type === 'xControlRemove') {
     const valid = ['post', 'text'].includes(msg.scope) ? TabCloserXUserControls.validPost(msg.key) : msg.scope === 'media' && TabCloserXUserControls.validMedia(msg.key);
@@ -748,6 +929,28 @@ async function handleXControlMessage(msg, sender) {
     await notifyXControls();
     return { ok: true, ...xControlSnapshot() };
   }
+  if (msg.type === 'xControlMarkSafe') {
+    // Only reachable after verifySafeMark; the flag comes from the listener,
+    // never from the message.
+    if (!fromX || verified?.ok !== true) return { ok: false, error: 'Mark images on X.' };
+    const result = TabCloserXUserControls.markSafe(xUserControls, {
+      key: msg.key, perDay: state.xProtection.safeMarksPerDay, now: trustedNow(),
+    });
+    if (!result.ok) return { ...xControlSnapshot(), ...result };
+    await browser.storage.local.set({ xUserControls });
+    await scheduleSafeMarkAlarm();
+    await notifyXControls();
+    return { ...xControlSnapshot(), ...result };
+  }
+  if (msg.type === 'xControlUnmarkSafe') {
+    // Removing a mark only makes protection stricter, so locks never block it.
+    if (!TabCloserXUserControls.validMedia(msg.key)) return { ok: false, error: 'This image has no stable identity.' };
+    delete xUserControls.safe[msg.key];
+    await browser.storage.local.set({ xUserControls });
+    await scheduleSafeMarkAlarm();
+    await notifyXControls();
+    return { ok: true, ...xControlSnapshot() };
+  }
   if (msg.type === 'xControlRevealStart') {
     if (!fromX) return { ok: false, error: 'Reveal is available only on X.' };
     const win = await browser.windows.getLastFocused();
@@ -755,13 +958,13 @@ async function handleXControlMessage(msg, sender) {
     if (!win.focused || active?.id !== sender.tab.id) return { ok: false, error: 'Keep the X tab focused to reveal.' };
     const result = TabCloserXUserControls.begin(xUserControls, {
       postId: msg.postId, tabId: sender.tab.id, limitSec: state.xProtection.revealDailySec,
-      now: Date.now(), token: uuid(),
+      postLimitMs: state.xProtection.revealPerPostSec * 1000, now: trustedNow(), token: uuid(),
     });
     if (result.ok) await browser.storage.local.set({ xUserControls });
     return result.ok ? result : { ...xControlSnapshot(msg.postId), ...result };
   }
   if (msg.type === 'xControlRevealEnd') {
-    if (fromX && TabCloserXUserControls.end(xUserControls, { token: msg.token, tabId: sender.tab.id, now: Date.now() })) {
+    if (fromX && TabCloserXUserControls.end(xUserControls, { token: msg.token, tabId: sender.tab.id, now: trustedNow() })) {
       await browser.storage.local.set({ xUserControls });
     }
     return { ok: true, ...xControlSnapshot(msg.postId) };
@@ -772,8 +975,8 @@ async function handleXControlMessage(msg, sender) {
 // Menus persist across MV3 event-page restarts; create only on installation/update.
 browser.runtime.onInstalled?.addListener(async () => {
   await browser.menus.removeAll();
-  browser.menus.create({ id: 'tabcloser-hide-text', title: 'TabCloser: hide this post’s text', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
-  browser.menus.create({ id: 'tabcloser-hide-media', title: 'TabCloser: hide this image / video', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
+  browser.menus.create({ id: 'tabcloser-hide-text', title: 'Custos: hide this post’s text', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
+  browser.menus.create({ id: 'tabcloser-hide-media', title: 'Custos: hide this image / video', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
 });
 browser.menus?.onClicked.addListener((info, tab) => {
   if (!['tabcloser-hide-text', 'tabcloser-hide-media'].includes(info.menuItemId) || !Number.isInteger(tab?.id)) return;
@@ -806,21 +1009,25 @@ async function handleMessage(msg, sender) {
       };
     }
     case 'saveAdultSites': {
-      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to change this protection.' };
-      if (typeof msg.enabled !== 'boolean') return { ok: false, error: 'Invalid adult-site setting.' };
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to change this protection.' };
+      if (typeof msg.enabled !== 'boolean' || (msg.safeSearch != null && typeof msg.safeSearch !== 'boolean')) return { ok: false, error: 'Invalid adult-site setting.' };
       if (!msg.enabled && isLockActive(state.adultSites.lockUntil)) return { ok: false, error: 'Adult-site protection is locked until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
+      // SafeSearch shares the adult-site lock: it can be added, never removed early.
+      if (msg.safeSearch === false && state.adultSites.safeSearch && isLockActive(state.adultSites.lockUntil)) {
+        return { ok: false, error: 'SafeSearch is locked with adult-site protection until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
+      }
       if (msg.enabled && !await loadAdultList()) return { ok: false, error: adultListError };
       state.adultSites.enabled = msg.enabled;
+      if (typeof msg.safeSearch === 'boolean') state.adultSites.safeSearch = msg.safeSearch;
       await persist();
       await enforceAdultSites();
       await handleFocusChange();
       return { ok: true };
     }
     case 'lockAdultSites': {
-      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open TabCloser settings to lock this protection.' };
-      const durationSec = Math.round(Number(msg.durationSec));
-      const until = Date.now() + durationSec * 1000;
-      if (!state.adultSites.enabled || !adultList || !Number.isFinite(durationSec) || durationSec < 60 || !Number.isSafeInteger(until) || until > 8640000000000000) return { ok: false, error: 'Enable adult-site protection and choose at least one minute.' };
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to lock this protection.' };
+      const until = lockDeadline(msg.durationSec);
+      if (!state.adultSites.enabled || !adultList || until == null) return { ok: false, error: 'Enable adult-site protection and choose at least one minute.' };
       if (isLockActive(state.adultSites.lockUntil) && until <= state.adultSites.lockUntil) return { ok: false, error: 'An adult-site lock cannot be shortened.' };
       state.adultSites.lockUntil = until;
       await persist();
@@ -854,12 +1061,14 @@ async function handleMessage(msg, sender) {
       for (const existing of state.rules) {
         if (!isLockActive(existing.disableLockedUntil)) continue;
         const replacement = cleaned.find(rule => rule.id === existing.id);
-        if (!replacement || !replacement.enabled || replacement.domain !== existing.domain ||
-            replacement.closeAfterSec !== existing.closeAfterSec ||
-            replacement.blockAfterClose !== existing.blockAfterClose ||
-            replacement.blockDurationSec !== existing.blockDurationSec ||
-            replacement.lockUnblock !== !!existing.lockUnblock) {
-          return { ok: false, error: 'Rule for ' + existing.domain + ' is locked until ' + new Date(existing.disableLockedUntil).toLocaleString() + '.' };
+        // A locked rule may only get stricter: a shorter limit, a block added
+        // or lengthened, early unblock locked. Its domain stays and it stays on.
+        const stricter = replacement && replacement.enabled && replacement.domain === existing.domain &&
+          replacement.closeAfterSec <= existing.closeAfterSec &&
+          (existing.blockAfterClose ? replacement.blockAfterClose && replacement.blockDurationSec >= existing.blockDurationSec : true) &&
+          (!existing.lockUnblock || replacement.lockUnblock);
+        if (!stricter) {
+          return { ok: false, error: 'Rule for ' + existing.domain + ' is locked until ' + new Date(existing.disableLockedUntil).toLocaleString() + '; it can only get stricter.' };
         }
       }
       for (const candidate of cleaned.filter(rule => rule.enabled)) {
@@ -884,25 +1093,42 @@ async function handleMessage(msg, sender) {
     }
     case 'lockRule': {
       const rule = state.rules.find(item => item.id === msg.id);
-      const durationSec = Math.round(Number(msg.durationSec));
-      if (!rule || !rule.enabled || !Number.isFinite(durationSec) || durationSec < 60) return { ok: false, error: 'Choose an enabled rule and a lock duration of at least one minute.' };
-      const until = Date.now() + durationSec * 1000;
+      const until = lockDeadline(msg.durationSec);
+      if (!rule || !rule.enabled || until == null) return { ok: false, error: 'Choose an enabled rule and a lock duration of at least one minute.' };
       if (isLockActive(rule.disableLockedUntil) && until <= rule.disableLockedUntil) return { ok: false, error: 'A rule lock cannot be shortened.' };
       rule.disableLockedUntil = until;
       await persist();
       return { ok: true, until };
     }
     case 'saveXProtection': {
-      // model implies labeled: requesting the model tier turns labeled on too.
-      const modelEnabled = msg.model === true;
-      const labeledEnabled = msg.labeled === true || modelEnabled;
       const current = state.xProtection;
+      // model implies labeled: requesting the model tier turns labeled on too.
+      // An omitted tier keeps its current value, so presentation-only saves
+      // (sacred art) can never switch protection off as a side effect.
+      const modelEnabled = typeof msg.model === 'boolean' ? msg.model : current.model.enabled;
+      const labeledEnabled = (typeof msg.labeled === 'boolean' ? msg.labeled : current.labeled.enabled) || modelEnabled;
       if (msg.revealDailySec != null) {
         if (!Number.isInteger(msg.revealDailySec) || msg.revealDailySec < 0 || msg.revealDailySec > 3600) {
           return { ok: false, error: 'Choose a daily allowance from 0 to 3600 seconds.' };
         }
         if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealDailySec > current.revealDailySec) {
           return { ok: false, error: 'The reveal allowance cannot increase while its allowance lock or X protection lock is active.' };
+        }
+      }
+      if (msg.revealPerPostSec != null) {
+        if (TabCloserXUserControls.postLimitSec(msg.revealPerPostSec) !== msg.revealPerPostSec) {
+          return { ok: false, error: 'Choose 3 to 10 seconds per post.' };
+        }
+        if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealPerPostSec > current.revealPerPostSec) {
+          return { ok: false, error: 'The time per post cannot increase while its allowance lock or X protection lock is active.' };
+        }
+      }
+      if (msg.safeMarksPerDay != null) {
+        if (TabCloserXUserControls.safeMarksPerDay(msg.safeMarksPerDay) !== msg.safeMarksPerDay) {
+          return { ok: false, error: 'Choose 0 to ' + TabCloserXUserControls.MAX_SAFE_MARKS_PER_DAY + ' marks per day.' };
+        }
+        if (xAllowanceLocked() && msg.safeMarksPerDay > current.safeMarksPerDay) {
+          return { ok: false, error: '“Not sensitive” marks cannot increase while the allowance lock or X protection lock is active.' };
         }
       }
       if (current.labeled.enabled && !labeledEnabled && isLockActive(current.labeled.lockUntil)) {
@@ -912,8 +1138,8 @@ async function handleMessage(msg, sender) {
         return { ok: false, error: 'The classifier tier is locked until ' + new Date(current.model.lockUntil).toLocaleString() + '.' };
       }
       if (typeof msg.sensitivity === 'string') {
+        if (!ownKey(SENSITIVITY_RANK, msg.sensitivity)) return { ok: false, error: 'Unknown sensitivity preset.' };
         const nextRank = SENSITIVITY_RANK[msg.sensitivity];
-        if (nextRank == null) return { ok: false, error: 'Unknown sensitivity preset.' };
         if (nextRank < SENSITIVITY_RANK[current.model.sensitivity] && isLockActive(current.model.lockUntil)) {
           return { ok: false, error: 'Sensitivity cannot be lowered while the classifier tier is locked (until ' + new Date(current.model.lockUntil).toLocaleString() + ').' };
         }
@@ -922,19 +1148,59 @@ async function handleMessage(msg, sender) {
       current.labeled.enabled = labeledEnabled;
       current.model.enabled = modelEnabled;
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
+      if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
+      if (msg.safeMarksPerDay != null) current.safeMarksPerDay = msg.safeMarksPerDay;
+      // Text replacement, like blocking, and hiding a post's other media are
+      // protections, not presentation: under an X lock they can be turned on
+      // but not off.
+      if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false) ||
+          (current.groupMedia && msg.groupMedia === false))) {
+        return { ok: false, error: 'Text replacement, like blocking, and hiding a post’s other media cannot be turned off while X protection is locked.' };
+      }
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
+      if (typeof msg.groupMedia === 'boolean') current.groupMedia = msg.groupMedia;
+      // Presentation only: the painting and the blur hide the same media, so
+      // this stays editable during every lock.
+      if (typeof msg.sacredArt === 'boolean') current.sacredArt = msg.sacredArt;
       if (modelEnabled) TabCloserClassifier.warmUp();
       await persist();
       await notifyXProtection();
       await notifyXControls();
       return { ok: true };
     }
+    case 'saveXProfile': {
+      if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to change profile protection.' };
+      const current = state.xProtection.profile;
+      const change = {};
+      if (msg.images != null) {
+        if (!ownKey(PROFILE_IMAGE_RANK, msg.images)) return { ok: false, error: 'Unknown profile image scope.' };
+        change.images = msg.images;
+      }
+      for (const key of PROFILE_SWITCHES) {
+        if (msg[key] == null) continue;
+        if (typeof msg[key] !== 'boolean') return { ok: false, error: 'Invalid profile protection setting.' };
+        change[key] = msg[key];
+      }
+      if (msg.alias != null) {
+        if (!['plain', 'virtue'].includes(msg.alias)) return { ok: false, error: 'Unknown alias style.' };
+        change.alias = msg.alias;
+      }
+      const next = normalizeXProfile({ ...current, ...change });
+      // Under an X lock profile protection may only tighten. The alias style
+      // is presentation and stays free.
+      if (xControlsLocked() && (PROFILE_IMAGE_RANK[next.images] < PROFILE_IMAGE_RANK[current.images] ||
+          PROFILE_SWITCHES.some(key => current[key] && !next[key]))) {
+        return { ok: false, error: 'Profile protection can only get stricter while X protection is locked.' };
+      }
+      state.xProtection.profile = next;
+      await persist();
+      await notifyXProtection();
+      return { ok: true };
+    }
     case 'lockXReveal': {
-      const durationSec = Math.round(Number(msg.durationSec));
-      if (!Number.isFinite(durationSec) || durationSec < 60) return { ok: false, error: 'Choose at least one minute.' };
-      const until = Date.now() + durationSec * 1000;
-      if (!Number.isSafeInteger(until) || until > 8640000000000000) return { ok: false, error: 'Invalid lock date.' };
+      const until = lockDeadline(msg.durationSec);
+      if (until == null) return { ok: false, error: 'Choose at least one minute.' };
       if (isLockActive(state.xProtection.revealLockUntil) && until <= state.xProtection.revealLockUntil) return { ok: false, error: 'An allowance lock cannot be shortened.' };
       state.xProtection.revealLockUntil = until;
       await persist();
@@ -944,9 +1210,8 @@ async function handleMessage(msg, sender) {
     case 'lockXProtection': {
       const target = msg.target === 'model' ? 'model' : 'labeled';
       const tier = state.xProtection[target];
-      const durationSec = Math.round(Number(msg.durationSec));
-      if (!tier.enabled || !Number.isFinite(durationSec) || durationSec < 60) return { ok: false, error: 'Enable that protection tier and choose at least one minute.' };
-      const until = Date.now() + durationSec * 1000;
+      const until = lockDeadline(msg.durationSec);
+      if (!tier.enabled || until == null) return { ok: false, error: 'Enable that protection tier and choose at least one minute.' };
       if (isLockActive(tier.lockUntil) && until <= tier.lockUntil) return { ok: false, error: 'A protection lock cannot be shortened.' };
       tier.lockUntil = until;
       // Locking the classifier tier must also pin the labeled tier it implies.
@@ -985,6 +1250,8 @@ async function handleMessage(msg, sender) {
     }
     case 'resetAccum': {
       const key = normalizeRuleDomain(msg.domain);
+      const lockedRule = state.rules.find(item => normalizeRuleDomain(item.domain) === key && isLockActive(item.disableLockedUntil));
+      if (lockedRule) return { ok: false, error: 'The timer for ' + key + ' is locked until ' + new Date(lockedRule.disableLockedUntil).toLocaleString() + ' and cannot be reset.' };
       state.accumSec[key] = 0;
       if (state.focus.domain === key) {
         state.focus.enteredAt = Date.now();
@@ -1002,15 +1269,25 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     if (bootPromise) await bootPromise;
     return handleMessage(msg, sender);
   }
+  if (msg.type === 'xControlMarkSafe') {
+    // Re-scoring can take a moment; it runs outside the state queue, and the
+    // mark itself is committed (and re-validated) inside it.
+    if (bootPromise) await bootPromise;
+    const verified = await verifySafeMark(msg, sender);
+    if (!verified.ok) return verified;
+    return enqueueStateChange(() => handleXControlMessage(msg, sender, verified));
+  }
   return enqueueStateChange(() => handleMessage(msg, sender));
 });
 
 // === Boot ===
 bootPromise = (async () => {
   await loadState();
+  stateLoaded = true;
   if (state.adultSites.enabled) await loadAdultList();
   if (state.xProtection.model.enabled) TabCloserClassifier.warmUp();
   await ensureExistingXTabsProtected();
+  await scheduleSafeMarkAlarm();
   // Periodic safety commit (0.5 min = Firefox MV3 minimum for installed addons)
   browser.alarms.create('commit', { periodInMinutes: 0.5 });
   await enforceAdultSites();

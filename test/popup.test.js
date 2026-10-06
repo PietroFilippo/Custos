@@ -134,14 +134,14 @@ test('overview distinguishes partial X locks and refreshes when a lock expires',
     model: { enabled: true, sensitivity: 'lenient', lockUntil: 0 },
   } });
   const overview = () => h.document.querySelector('#xOverview').textContent;
-  assert.match(overview(), /X labels \+ lenient classifier/);
+  assert.match(overview(), /Labels \+ classifier · Lenient/);
   assert.match(overview(), /Labels locked/);
-  assert.doesNotMatch(overview(), /Classifier locked/);
+  assert.doesNotMatch(overview(), /(?<!Labels )Locked/);
   h.data.xProtection.labeled.lockUntil = now - 1;
   h.data.xProtection.model.lockUntil = now + 60000;
   await h.refresh();
   assert.doesNotMatch(overview(), /Labels locked/);
-  assert.match(overview(), /Classifier locked/);
+  assert.match(overview(), /Locked 1 min/, 'the classifier lock is the level lock');
   h.data.xProtection = {};
   await h.refresh();
   assert.match(overview(), /Off/);
@@ -158,11 +158,12 @@ test('overview distinguishes adult list failures, unlocked protection, and disab
   assert.doesNotMatch(overview(), /Locked/);
   h.data.adultSites.error = 'Broken bundled list';
   await h.refresh();
-  assert.match(overview(), /Check settings.*navigation held/);
+  assert.match(overview(), /Attention.*navigation held/);
+  assert.equal(h.document.querySelector('#headerSummary').textContent, 'Check settings');
   h.data.adultSites.enabled = false;
   await h.refresh();
   assert.match(overview(), /Off/);
-  assert.doesNotMatch(overview(), /Check settings|navigation held/);
+  assert.doesNotMatch(overview(), /Attention|navigation held/);
 });
 
 test('overview counts enabled timer domains once including cooldowns, and excludes disabled or expired locks', async t => {

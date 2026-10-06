@@ -2,41 +2,45 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>TabCloser</title>
+  <title>Custos</title>
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <header class="popup-header brand">
-    <img src="icons/tabcloser.svg" alt="" width="40" height="40">
-    <div><h1 class="brand-name">TabCloser</h1><p class="brand-caption">Your browsing protection</p></div>
+  <header class="popup-header">
+    <img src="icons/custos.svg" alt="" width="26" height="26">
+    <h1>Custos</h1>
+    <span id="headerSummary" class="header-summary"></span>
   </header>
 
   <main class="scroll">
     <p id="error" class="error" role="status" hidden>Unable to refresh. Retrying…</p>
+    <p id="privateNote" class="notice" hidden>Not active in private windows. Allow it in about:addons → Custos.</p>
     <section aria-labelledby="protectionTitle">
-      <h2 id="protectionTitle">Protection overview</h2>
-      <div id="protection" class="protection-overview"></div>
+      <h2 id="protectionTitle">Protection</h2>
+      <ul id="protection" class="overview"></ul>
     </section>
-    <section>
-      <h2><span id="currentDot" class="dot dot-muted"></span> Current site</h2>
+    <section aria-labelledby="currentTitle">
+      <h2 id="currentTitle">This site</h2>
       <div id="current"></div>
     </section>
 
-    <section id="activeSection" hidden>
-      <h2><span class="dot dot-muted"></span> Tracked sites <span id="activeCount" class="count"></span></h2>
+    <section id="activeSection" aria-labelledby="activeTitle" hidden>
+      <h2 id="activeTitle">Tracked sites <span id="activeCount" class="count"></span></h2>
       <div id="active"></div>
       <button id="activeMore" class="more" type="button" aria-controls="active" aria-expanded="false" hidden></button>
     </section>
 
-    <section id="blockSection" hidden>
-      <h2><span class="dot dot-amber"></span> Blocked <span id="blockCount" class="count"></span></h2>
+    <section id="blockSection" aria-labelledby="blockTitle" hidden>
+      <h2 id="blockTitle">Blocked <span id="blockCount" class="count"></span></h2>
       <div id="blocks"></div>
       <button id="blockMore" class="more" type="button" aria-controls="blocks" aria-expanded="false" hidden></button>
     </section>
   </main>
 
-  <button id="openOptions" class="primary-action" type="button">Open settings <span aria-hidden="true">→</span></button>
+  <footer class="popup-footer">
+    <button id="openOptions" class="primary-action" type="button">Open settings <span aria-hidden="true">→</span></button>
+  </footer>
   <script src="common.js"></script>
   <script src="popup.js"></script>
 </body>

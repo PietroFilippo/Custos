@@ -51,3 +51,15 @@ test('fails closed when a model class is missing or invalid', () => {
   assert.equal(decidePredictions(predictions({ Neutral: 1 })).verdict, 'protect');
   assert.equal(decidePredictions(null).reason, 'invalid');
 });
+
+test('"Not sensitive" marks are only possible for borderline detections', () => {
+  const { markEligible } = require('../x-verdict.js');
+  const scores = values => ({ Drawing: 0.05, Hentai: 0.01, Neutral: 0.5, Porn: 0.04, Sexy: 0.4, ...values });
+  assert.equal(markEligible(scores({})), true, 'a mostly suggestive, low-explicit call is borderline');
+  assert.equal(markEligible(scores({ Porn: 0.45 })), false, 'a strong explicit score is confident');
+  assert.equal(markEligible(scores({ Sexy: 0.9, Neutral: 0.0 })), false, 'a strongly suggestive score is confident');
+  assert.equal(markEligible(scores({ Hentai: 0.45, Drawing: 0.1 })), false, 'hentai counts when it beats drawing');
+  assert.equal(markEligible(scores({ Hentai: 0.3, Drawing: 0.6 })), true, 'a painting-like hentai score does not');
+  assert.equal(markEligible(null), false);
+  assert.equal(markEligible({ Porn: 0.1 }), false, 'incomplete scores are never eligible');
+});

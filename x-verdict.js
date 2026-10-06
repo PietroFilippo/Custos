@@ -35,8 +35,10 @@
     strict: { threshold: 0.12, sexyWeight: 0.7, hentaiSolo: 0.4 },
   };
 
+  // Own keys only: "__proto__" or "constructor" must never select a preset.
   function presetValues(name) {
-    return SENSITIVITY_PRESETS[name] || SENSITIVITY_PRESETS.balanced;
+    return typeof name === 'string' && Object.hasOwn(SENSITIVITY_PRESETS, name)
+      ? SENSITIVITY_PRESETS[name] : SENSITIVITY_PRESETS.balanced;
   }
 
   function decidePredictions(predictions, threshold = ADULT_THRESHOLD, sexyWeight = SEXY_WEIGHT, hentaiSolo = HENTAI_SOLO_THRESHOLD) {
@@ -54,6 +56,17 @@
     };
   }
 
+  // "Not sensitive" marks are for borderline calls only. A confident
+  // detection (a strong explicit or strongly suggestive score) can never be
+  // marked, whatever the sensitivity preset.
+  const MARK_EXPLICIT_CEILING = 0.4;
+  const MARK_SUGGESTIVE_CEILING = 0.85;
+  function markEligible(scores) {
+    if (!scores || ![...EXPECTED_CLASSES].every(name => Number.isFinite(scores[name]))) return false;
+    const hentai = scores.Hentai > scores.Drawing || scores.Hentai >= HENTAI_SOLO_THRESHOLD ? scores.Hentai : 0;
+    return scores.Porn + hentai < MARK_EXPLICIT_CEILING && scores.Sexy < MARK_SUGGESTIVE_CEILING;
+  }
+
   return {
     ADULT_CLASSES,
     ADULT_THRESHOLD,
@@ -64,7 +77,10 @@
     MODEL_VERSION,
     SENSITIVITY_PRESETS,
     SEXY_WEIGHT,
+    MARK_EXPLICIT_CEILING,
+    MARK_SUGGESTIVE_CEILING,
     decidePredictions,
+    markEligible,
     normalizeScores,
     presetValues,
   };

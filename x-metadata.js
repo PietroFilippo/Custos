@@ -92,7 +92,9 @@
 
   function summarizeDiagnosticValue(value) {
     if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
-    if (typeof value === 'string') return value.slice(0, 120);
+    // Only enum-like tokens are copied; free text (which could quote a post
+    // or a username) is reduced to its length.
+    if (typeof value === 'string') return /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : 'string(' + value.length + ')';
     if (Array.isArray(value)) return 'array(' + value.length + ')';
     return 'object(' + Object.keys(value).slice(0, 10).join(',') + ')';
   }
@@ -149,6 +151,96 @@
     };
   }
 
+  // Explicit self-descriptions that adult accounts advertise in a name or bio.
+  // Opt-in, and only ever combined with X's own account flag in the UI.
+  const explicitMarkerPattern = /🔞|\bnsfw\b|\bonlyfans\b|\bfansly\b|(?:^|[^\d])18\s?\+/iu;
+  const explicitLinkHostPattern = /(?:^|\.)(?:onlyfans\.com|fansly\.com)$/i;
+  const handlePattern = /^[A-Za-z0-9_]{1,15}$/;
+
+  // Profile pictures are matched across every X surface by their image path;
+  // shared default avatars never identify an account.
+  function profileImageKey(value) {
+    try {
+      const match = new URL(value).pathname.match(/^\/profile_images\/(\d+)\//);
+      return match ? '/profile_images/' + match[1] + '/' : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function profileBannerKey(value) {
+    try {
+      const match = new URL(value).pathname.match(/^\/profile_banners\/(\d+)\//);
+      return match ? '/profile_banners/' + match[1] + '/' : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function explicitLink(value) {
+    try {
+      return explicitLinkHostPattern.test(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  function accountFromUser(node) {
+    if (node.__typename && node.__typename !== 'User') return null;
+    const legacy = node.legacy && typeof node.legacy === 'object' ? node.legacy : null;
+    const core = node.core && typeof node.core === 'object' ? node.core : null;
+    const handle = core?.screen_name ?? legacy?.screen_name;
+    if (typeof handle !== 'string' || !handlePattern.test(handle)) return null;
+    const id = node.rest_id ?? legacy?.id_str;
+    const name = String(core?.name ?? legacy?.name ?? '');
+    const bio = String(legacy?.description ?? node.profile_bio?.description ?? '');
+    const links = [legacy?.url, ...(legacy?.entities?.url?.urls || []), ...(legacy?.entities?.description?.urls || [])]
+      .map(link => (typeof link === 'string' ? link : link?.expanded_url))
+      .filter(link => typeof link === 'string');
+    const following = node.relationship_perspectives?.following ?? legacy?.following;
+    return {
+      id: id == null ? null : String(id),
+      handle: handle.toLowerCase(),
+      flagged: hasDirectSensitivityMarker(legacy) || hasDirectSensitivityMarker(node) ||
+        hasSensitiveProfileInterstitial(node) || hasSensitiveProfileInterstitial(legacy),
+      marker: explicitMarkerPattern.test(name + '\n' + bio) || links.some(explicitLink),
+      following: typeof following === 'boolean' ? following : null,
+      avatarKey: profileImageKey(node.avatar?.image_url ?? legacy?.profile_image_url_https),
+      bannerKey: profileBannerKey(legacy?.profile_banner_url),
+    };
+  }
+
+  // Account signals for profile protection. Names, bios, and links are only
+  // read to compute the marker flag; they never leave this function.
+  function extractAccounts(payload, limit = 2000) {
+    const accounts = new Map();
+    const seen = new Set();
+
+    function inspect(node) {
+      if (!node || typeof node !== 'object' || seen.has(node) || accounts.size >= limit) return;
+      seen.add(node);
+      const account = accountFromUser(node);
+      if (account) {
+        const previous = accounts.get(account.handle);
+        accounts.set(account.handle, previous ? {
+          id: previous.id ?? account.id,
+          handle: account.handle,
+          flagged: previous.flagged || account.flagged,
+          marker: previous.marker || account.marker,
+          following: previous.following ?? account.following,
+          avatarKey: previous.avatarKey ?? account.avatarKey,
+          bannerKey: previous.bannerKey ?? account.bannerKey,
+        } : account);
+      }
+      for (const child of Object.values(node)) {
+        if (child && typeof child === 'object') inspect(child);
+      }
+    }
+
+    inspect(payload);
+    return [...accounts.values()];
+  }
+
   function extractAgeVerificationTweetIds(payload) {
     const tweetIds = new Set();
     const seen = new Set();
@@ -169,7 +261,7 @@
     return [...tweetIds];
   }
 
-  function extractDirectVideoSources(payload) {
+  function directVideoSources(payload) {
     const selected = new Map();
     const seen = new Set();
 
@@ -188,6 +280,9 @@
       }
     }
 
+    const videosByTweet = new Map();
+    const byPoster = {};
+
     function inspect(node) {
       if (!node || typeof node !== 'object' || seen.has(node)) return;
       seen.add(node);
@@ -195,12 +290,20 @@
       const tweetId = tweetIdFromNode(node);
       if (tweetId && isTweetNode(node, media) && Array.isArray(media)) {
         for (const item of media) {
+          let best = null;
           for (const variant of item?.video_info?.variants ?? []) {
             if (!isDirectMp4(variant)) continue;
             const rank = variantRank(variant);
-            const previous = selected.get(tweetId);
-            if (!previous || rank < previous.rank) selected.set(tweetId, { rank, url: variant.url });
+            if (!best || rank < best.rank) best = { rank, url: variant.url };
           }
+          if (!best) continue;
+          // Each video is identified by its poster, which the page shows too.
+          const poster = normalizeMediaUrl(item.media_url_https || item.media_url || '');
+          if (!videosByTweet.has(tweetId)) videosByTweet.set(tweetId, new Set());
+          videosByTweet.get(tweetId).add(poster || best.url);
+          if (poster) byPoster[poster] = { url: best.url, tweetId };
+          const previous = selected.get(tweetId);
+          if (!previous || best.rank < previous.rank) selected.set(tweetId, best);
         }
       }
       for (const child of Object.values(node)) {
@@ -209,7 +312,20 @@
     }
 
     inspect(payload);
-    return Object.fromEntries([...selected].map(([tweetId, value]) => [tweetId, value.url]));
+    // A tweet-level source is only safe for single-video posts: in a
+    // multi-video post it would lend one video's frames to the other.
+    const byTweet = Object.fromEntries([...selected]
+      .filter(([tweetId]) => videosByTweet.get(tweetId)?.size === 1)
+      .map(([tweetId, value]) => [tweetId, value.url]));
+    return { byTweet, byPoster };
+  }
+
+  function extractDirectVideoSources(payload) {
+    return directVideoSources(payload).byTweet;
+  }
+
+  function extractDirectVideoSourcesByPoster(payload) {
+    return directVideoSources(payload).byPoster;
   }
 
   function extractSensitiveMedia(payload) {
@@ -264,8 +380,11 @@
 
   return {
     containsSensitivityMarker,
+    extractAccounts,
     extractAgeVerificationTweetIds,
     extractDirectVideoSources,
+    extractDirectVideoSourcesByPoster,
+    directVideoSources,
     extractSensitiveMedia,
     normalizeMediaUrl,
     summarizeSensitivitySignals,

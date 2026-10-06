@@ -10,7 +10,8 @@ function uuid() {
 function hostFromUrl(url) {
   try {
     const parsed = new URL(url);
-    return /^https?:$/.test(parsed.protocol) ? parsed.hostname.toLowerCase() : null;
+    // "x.com." is the same site as "x.com"; a trailing dot must not escape rules.
+    return /^https?:$/.test(parsed.protocol) ? parsed.hostname.toLowerCase().replace(/\.+$/, '') : null;
   } catch {
     return null;
   }
@@ -23,7 +24,9 @@ function normalizeRuleDomain(d) {
     .toLowerCase()
     .replace(/^https?:\/\//, '')
     .replace(/^www\./, '')
-    .replace(/\/.*$/, '');
+    .replace(/[/?#].*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/\.+$/, '');
 }
 
 function hostMatches(host, ruleDomain) {
@@ -62,4 +65,37 @@ function formatDuration(totalSec) {
   const s = totalSec % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Lock copy shared by settings, the popup, and the block page.
+// Long locks show their year so "until 3 Nov" is never ambiguous.
+const otherYear = until => new Date(until).getFullYear() !== new Date().getFullYear();
+
+function formatLockDate(until) {
+  return new Date(until).toLocaleString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    ...(otherYear(until) ? { year: 'numeric' } : {}),
+  });
+}
+
+function formatShortDate(until) {
+  return new Date(until).toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(otherYear(until) ? { year: 'numeric' } : {}) });
+}
+
+// "4 d 11 h", "3 h 5 min", "12 min"; never rounds a live lock down to zero.
+function formatTimeLeft(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  if (minutes < 60) return minutes + ' min';
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + ' h' + (minutes % 60 ? ' ' + (minutes % 60) + ' min' : '');
+  const days = Math.floor(hours / 24);
+  return days + ' d' + (hours % 24 ? ' ' + (hours % 24) + ' h' : '');
+}
+
+// Single unit for compact chips: "6 d", "4 h", "12 min".
+function formatTimeLeftShort(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  if (minutes < 60) return minutes + ' min';
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? hours + ' h' : Math.floor(hours / 24) + ' d';
 }
