@@ -555,8 +555,8 @@ function renderAdultSites() {
   $adultEnabled.checked = config.enabled === true;
   $adultEnabled.disabled = locked;
   $adultSafeSearch.checked = config.safeSearch === true;
-  // SafeSearch shares the adult lock: it can be added during a lock, never removed.
-  $adultSafeSearch.disabled = config.enabled !== true || (locked && config.safeSearch === true);
+  // The lock keeps blocking on; SafeSearch stays editable.
+  $adultSafeSearch.disabled = config.enabled !== true;
   const pill = document.getElementById('adultPill');
   pill.textContent = config.enabled ? config.error ? 'Attention' : 'On' : 'Off';
   pill.className = 'pill ' + (config.enabled ? config.error ? 'pill-attention' : 'pill-on' : '');
@@ -565,18 +565,17 @@ function renderAdultSites() {
     ? Number(config.listCount || 0).toLocaleString() + ' domains · list bundled ' + new Date(config.listUpdatedAt).toLocaleDateString()
     : 'Off. Turn on to use the bundled list.');
   status.className = 'status-line' + (config.error ? ' warn' : '');
-  renderOnce(document.getElementById('adultLock'), lockKey(config.lockUntil) + ':' + !!config.enabled + ':' + !!config.safeSearch, () => {
+  renderOnce(document.getElementById('adultLock'), lockKey(config.lockUntil) + ':' + !!config.enabled, () => {
     if (locked) {
-      return lockBanner(config.lockUntil, 'Can’t be switched off until then' + (config.safeSearch ? ', and neither can SafeSearch' : '') +
-        '. After the lock ends, it stays on until you turn it off.');
+      return lockBanner(config.lockUntil, 'Blocking can’t be switched off until then; SafeSearch stays editable. After the lock ends, blocking stays on until you turn it off.');
     }
     if (!config.enabled) return null;
     return [
       el('p', { class: 'help' }, 'Lock it to keep blocking on for a while. A lock can’t be shortened.'),
       lockControl({
         title: 'Lock adult-site blocking',
-        scope: 'Block known adult websites' + (config.safeSearch ? ' · SafeSearch' : ''),
-        help: 'Until the lock ends, blocking' + (config.safeSearch ? ' and SafeSearch' : '') + ' can’t be switched off. A lock can’t be shortened.',
+        scope: 'Block known adult websites',
+        help: 'Until the lock ends, blocking can’t be switched off. SafeSearch stays editable. A lock can’t be shortened.',
         async onLock(durationSec) {
           const response = await changeAdultSites({ type: 'lockAdultSites', durationSec });
           return response?.ok ? null : response?.error || 'Unable to lock.';
@@ -630,12 +629,8 @@ function renderXProtection() {
   $xReplaceText.checked = config.replaceText === true;
   $xBlockLike.checked = config.blockLike === true;
   $xGroupMedia.checked = config.groupMedia === true;
-  // Protections, unlike presentation, cannot be switched off during a lock.
-  $xReplaceText.disabled = (locks.labeled || locks.model) && $xReplaceText.checked;
-  $xBlockLike.disabled = (locks.labeled || locks.model) && $xBlockLike.checked;
-  $xGroupMedia.disabled = (locks.labeled || locks.model) && $xGroupMedia.checked;
   renderReveals(config, locks);
-  renderProfile(config, locks);
+  renderProfile(config);
   renderManualHides(snapshot.xUserControls || { posts: [], media: [] });
   renderSafeMarks(config, locks, snapshot.xUserControls || {});
 }
@@ -828,33 +823,22 @@ function profileConfig(config) {
   };
 }
 
-function renderProfile(config, locks) {
+// Profile protection stays editable during an X lock: it changes how
+// accounts are shown, not whether media is hidden.
+function renderProfile(config) {
   const profile = profileConfig(config);
-  const locked = locks.labeled || locks.model;
-  // While X protection is locked, profile protection can only get stricter.
-  const pinned = value => locked && value;
   $profile.markers.checked = profile.markers;
-  $profile.markers.disabled = pinned(profile.markers);
-  for (const radio of $profile.images) {
-    radio.checked = radio.value === profile.images;
-    radio.disabled = locked && imageScopeRank[radio.value] < imageScopeRank[profile.images];
-  }
+  for (const radio of $profile.images) radio.checked = radio.value === profile.images;
   for (const key of ['avatars', 'banners']) {
     $profile[key].checked = profile[key];
-    $profile[key].disabled = profile.images === 'off' || pinned(profile[key]);
+    $profile[key].disabled = profile.images === 'off';
   }
   $profile.names.checked = profile.names;
-  $profile.names.disabled = pinned(profile.names);
   for (const radio of $profile.alias) {
     radio.checked = radio.value === profile.alias;
     radio.disabled = !profile.names;
   }
   $profile.collapse.checked = profile.collapse;
-  $profile.collapse.disabled = pinned(profile.collapse);
-  const note = document.getElementById('xProfileLockNote');
-  const until = Math.max(locks.labeled ? config.labeled.lockUntil : 0, locks.model ? config.model.lockUntil : 0);
-  note.hidden = !locked;
-  note.textContent = locked ? 'X protection is locked until ' + formatLockDate(until) + ', so profile protection can only get stricter. The alias style can still change.' : '';
 }
 
 async function saveProfile(change) {

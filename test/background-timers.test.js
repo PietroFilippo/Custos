@@ -311,7 +311,7 @@ test('sacred art is a presentation switch: editable under every X lock and never
   assert.equal((await unlocked.state()).xProtection.model.enabled, true, 'presentation saves never switch protection off');
 });
 
-test('profile settings save from settings only, and only tighten under an X lock except the alias', async () => {
+test('profile settings save from settings only and stay editable under an X lock', async () => {
   const h = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 } } });
   assert.deepEqual(JSON.parse(JSON.stringify((await h.state()).xProtection.profile)), {
     images: 'off', avatars: true, banners: true, markers: false, names: false, alias: 'virtue', collapse: false,
@@ -320,17 +320,18 @@ test('profile settings save from settings only, and only tighten under an X lock
     'content scripts cannot change profile protection');
   assert.equal((await h.send({ type: 'saveXProfile', images: 'flagged', names: true, collapse: true }, settingsSender)).ok, true);
   assert.equal((await h.send({ type: 'saveXProfile', images: 'everyone' }, settingsSender)).ok, true, 'widening is allowed');
-  assert.equal((await h.send({ type: 'saveXProfile', images: 'flagged' }, settingsSender)).ok, false, 'narrowing is refused');
-  assert.equal((await h.send({ type: 'saveXProfile', names: false }, settingsSender)).ok, false);
-  assert.equal((await h.send({ type: 'saveXProfile', alias: 'plain' }, settingsSender)).ok, true, 'the alias style is presentation');
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'flagged' }, settingsSender)).ok, true, 'narrowing is allowed under the lock');
+  assert.equal((await h.send({ type: 'saveXProfile', names: false, markers: true }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveXProfile', alias: 'plain' }, settingsSender)).ok, true);
   assert.equal((await h.send({ type: 'saveXProfile', images: 'all' }, settingsSender)).ok, false, 'unknown scopes are rejected');
   const profile = (await h.state()).xProtection.profile;
-  assert.equal(profile.images, 'everyone');
-  assert.equal(profile.names, true);
+  assert.equal(profile.images, 'flagged');
+  assert.equal(profile.names, false);
+  assert.equal(profile.markers, true);
   assert.equal(profile.alias, 'plain');
-  assert.equal(h.saved().xProtection.profile.images, 'everyone');
-  h.advance(900);
-  assert.equal((await h.send({ type: 'saveXProfile', images: 'off', names: false }, settingsSender)).ok, true, 'expiry unlocks loosening');
+  assert.equal(h.saved().xProtection.profile.images, 'flagged');
+  assert.equal((await h.send({ type: 'saveXProfile', images: 'off', collapse: false }, settingsSender)).ok, true, 'it can be turned off entirely');
+  assert.equal((await h.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, false, 'the media protection stays locked');
 });
 
 test('account flags are parsed from X responses only while profile protection needs them', async () => {
@@ -372,10 +373,11 @@ test('SafeSearch rewrites search engines to their strict filter and shares the a
   assert.equal(Object.keys(await request('https://www.google.com/maps?q=test')).length, 0, 'only search pages are rewritten');
   assert.equal(Object.keys(await h.events.adultRequest({ type: 'sub_frame', url: 'https://www.google.com/search?q=test' })).length, 0);
   assert.equal((await h.send({ type: 'lockAdultSites', durationSec: 120 }, settingsSender)).ok, true);
-  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: false }, settingsSender)).ok, false, 'locked SafeSearch stays on');
-  h.advance(121);
-  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: false }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: false }, settingsSender)).ok, true, 'SafeSearch stays editable during the lock');
   assert.equal(Object.keys(await request('https://www.google.com/search?q=test')).length, 0);
+  assert.equal((await h.send({ type: 'saveAdultSites', enabled: false, safeSearch: false }, settingsSender)).ok, false, 'blocking itself stays locked');
+  assert.equal((await h.send({ type: 'saveAdultSites', enabled: true, safeSearch: true }, settingsSender)).ok, true);
+  assert.equal((await request('https://www.google.com/search?q=test')).redirectUrl, 'https://www.google.com/search?q=test&safe=active');
 });
 
 test('time per post is 3-10 s, reaches the ledger, and may only go down while locked', async () => {
@@ -456,17 +458,16 @@ test('a trailing dot in the host cannot escape timers, cooldowns, or protections
   assert.match(h.updates.at(-1)?.url || '', /blocked\.html\?domain=x\.com/);
 });
 
-test('text replacement, like blocking, and post-wide hiding cannot be switched off under an X lock', async () => {
+test('how hidden posts are handled stays editable under an X lock; the media protection does not', async () => {
   const locked = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 }, replaceText: true, blockLike: true, groupMedia: true } });
-  assert.equal((await locked.send({ type: 'saveXProtection', replaceText: false }, settingsSender)).ok, false);
-  assert.equal((await locked.send({ type: 'saveXProtection', blockLike: false }, settingsSender)).ok, false);
-  assert.equal((await locked.send({ type: 'saveXProtection', groupMedia: false }, settingsSender)).ok, false);
-  assert.equal((await locked.state()).xProtection.groupMedia, true);
-  const lockedOff = await start({ xProtection: { labeled: { enabled: true, lockUntil: 900000 } } });
-  assert.equal((await lockedOff.send({ type: 'saveXProtection', groupMedia: true }, settingsSender)).ok, true, 'turning it on is stricter');
-  assert.equal((await locked.send({ type: 'saveXProtection', sacredArt: true }, settingsSender)).ok, true, 'presentation stays free');
-  const open = await start({ xProtection: { labeled: { enabled: true }, replaceText: true } });
-  assert.equal((await open.send({ type: 'saveXProtection', replaceText: false }, settingsSender)).ok, true);
+  for (const change of [{ replaceText: false }, { blockLike: false }, { groupMedia: false }, { sacredArt: true }, { replaceText: true, groupMedia: true }]) {
+    assert.equal((await locked.send({ type: 'saveXProtection', ...change }, settingsSender)).ok, true, JSON.stringify(change));
+  }
+  const state = (await locked.state()).xProtection;
+  assert.equal(state.blockLike, false);
+  assert.equal(state.replaceText, true);
+  assert.equal(state.labeled.enabled, true, 'the level is untouched');
+  assert.equal((await locked.send({ type: 'saveXProtection', labeled: false, model: false }, settingsSender)).ok, false, 'the level stays locked');
 });
 
 test('moving the system clock forward does not end locks once a server time is known', async () => {

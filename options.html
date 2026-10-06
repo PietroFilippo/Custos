@@ -34,7 +34,7 @@
       <a href="#adult-sites" data-section="adult">Adult websites</a>
       <a href="#x-protection" data-section="x">X protection</a>
       <a href="#about">About</a>
-      <p class="nav-note">Locks can’t be shortened or removed early. While something is locked, it can only get stricter.</p>
+      <p class="nav-note">Locks can’t be shortened or removed early. While something is locked, its protection can only get stricter; how hidden content is shown stays editable.</p>
     </nav>
 
     <main class="content">
@@ -67,7 +67,7 @@
         </div>
         <div class="option-row">
           <label class="switch"><input id="adultSafeSearch" type="checkbox"> <span>Enforce SafeSearch on search engines</span></label>
-          <p class="help">Google, Bing, DuckDuckGo, and Brave Search always use their strictest filter, including image search. Needs adult-site blocking on and shares its lock.</p>
+          <p class="help">Google, Bing, DuckDuckGo, and Brave Search always use their strictest filter, including image search. Needs adult-site blocking on. It stays editable during a lock.</p>
         </div>
         <div id="adultLock" class="lock-row"></div>
         <p id="adultFeedback" class="inline-feedback" role="status"></p>
@@ -120,11 +120,11 @@
         <div class="group">
           <div class="group-head">
             <h3>Hidden media</h3>
-            <p class="help">Once media is confirmed sensitive, the original stays in place, heavily blurred and darkened, with a “Sensitive media hidden” notice and a “Why hidden?” button.</p>
+            <p class="help">Once media is confirmed sensitive, the original stays in place, heavily blurred and darkened, with a “Sensitive media hidden” notice and a “Why hidden?” button. These options change how hidden posts are handled, so they stay editable while X protection is locked.</p>
           </div>
           <div class="row">
             <label class="switch gold"><input id="xSacredArt" type="checkbox"> <span>Cover hidden media with sacred art</span></label>
-            <p class="help">Shows a public-domain painting over the blur. This only changes how hidden media looks, so it can be switched at any time, even while X protection is locked. With it off, clicking hidden media opens “Why hidden?”.</p>
+            <p class="help">Shows a public-domain painting over the blur. With it off, clicking hidden media opens “Why hidden?”.</p>
           </div>
           <div class="row">
             <label class="switch gold"><input id="xGroupMedia" type="checkbox"> <span>Hide all of a post’s media when one is hidden</span></label>
@@ -232,7 +232,6 @@
             <p class="help">Replies fold into one line. “Show…” opens “Why hidden?” and uses the same hold-to-reveal allowance as media; there is no one-click reveal.</p>
           </div>
           <p id="xProfileFeedback" class="inline-feedback" role="status"></p>
-          <p id="xProfileLockNote" class="help lock-icon" hidden></p>
         </div>
 
         <div class="group">
