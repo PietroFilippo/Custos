@@ -4,7 +4,7 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 
 ## Basics
 
-- **Name:** Custos
+- **Name:** Custos – Porn Blocker & NSFW Filter (the listing name; the add-on itself is still called Custos in Firefox). A plain name rarely comes up in search, so the subtitle carries the words people search for. AMO allows up to 50 characters. After uploading a new version, check the listing name is unchanged; if an upload ever resets it to the manifest's name, set it again in the Developer Hub.
 - **Slug:** `custos`. Submitted on 6 October 2026 through the API (`web-ext sign --channel listed --amo-metadata`), version 0.5.0 from tag `v0.5.0`. The privacy policy and the first screenshot were added through the AMO API; the API allows roughly one screenshot upload per hour, so add the others in the Developer Hub (Edit Product Page → Media).
 - **Categories:** Privacy & Security; Social & Communication
 - **Tags:** content blocker, privacy, social media, twitter (AMO accepts only tags from its fixed list)
@@ -17,7 +17,7 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 
 ## Summary (250 characters max)
 
-> Custody of the eyes: time limits for distracting sites, blocking of known adult websites, and on-device hiding of sensitive media on X. Locks keep your settings from being loosened in a weak moment. Nothing you browse leaves your browser.
+> Block porn sites, set time limits on distracting sites, and hide NSFW media on X (Twitter) with on-device detection. Locks keep your settings from being loosened in a weak moment. Nothing you browse leaves your browser.
 
 ## Description
 
@@ -40,6 +40,42 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 > **Please note:** automatic detection is not perfect. It can hide harmless media and miss sensitive media, and the domain list can block a harmless site or miss a new one. Custos lowers exposure; it cannot guarantee that nothing gets through.
 >
 > Open source (MIT): https://github.com/PietroFilippo/Custos
+
+## Portuguese (pt-BR) listing
+
+AMO search only matches a listing in the language it is written in, so the listing also has a Brazilian Portuguese version. The extension's interface stays in English, and the description says so.
+
+### Name
+
+> Custos – Bloqueador de Pornografia e Filtro NSFW
+
+### Summary
+
+> Bloqueie sites pornográficos, limite o tempo em sites que distraem e esconda mídia NSFW no X (Twitter) com detecção no próprio dispositivo. Travas impedem afrouxar as configurações num momento de fraqueza. Nada sai do seu navegador.
+
+### Description
+
+> Custos (do latim, “guardião”) ajuda você a guardar os olhos enquanto navega.
+>
+> **Limites de tempo por site.** Defina um limite de uso para um site, contado só enquanto a aba dele está em foco. Ao chegar no limite, as abas fecham e o site pode ficar bloqueado por um tempo. A página de bloqueio não tem botão de desbloqueio.
+>
+> **Sites adultos.** Bloqueie cerca de 937 mil domínios de pornografia conhecidos, de uma lista que vem com a extensão, e mantenha o Google, o Bing, o DuckDuckGo e o Brave Search no SafeSearch. A verificação acontece no seu dispositivo.
+>
+> **Proteção no X (Twitter).** Esconda imagens, GIFs, vídeos e prévias de links sensíveis usando os próprios rótulos do X e um classificador opcional que roda no seu dispositivo. A mídia escondida fica desfocada ou coberta por uma pintura sacra de domínio público, e um item escondido pode esconder o resto do post. O painel “Why hidden?” explica cada decisão.
+>
+> **Proteção de perfis.** Desfoque as fotos de perfil e as capas de contas que o X marca como sensíveis (ou de todos que você não segue), troque os nomes delas por um apelido e recolha as respostas delas.
+>
+> **Travas.** Trave qualquer proteção por uma hora, um dia, uma semana, 30 dias ou até uma data. Enquanto travada, a proteção só pode ficar mais rígida, e a forma como o conteúdo escondido aparece continua sendo escolha sua. Mudar o relógio do sistema não encerra uma trava antes da hora.
+>
+> **Atrito em vez de brechas.** Uma revelação rápida segurando um botão, com uma pequena cota diária, e marcações de “não sensível” para erros do classificador, que só valem um dia depois.
+>
+> **Privado por design.** Sem conta, sem análises, sem servidor. A mídia é verificada no seu dispositivo e descartada; as configurações ficam no seu navegador.
+>
+> **Atenção:** a detecção automática não é perfeita. Ela pode esconder mídia inofensiva e deixar passar mídia sensível, e a lista de domínios pode bloquear um site inofensivo ou não conhecer um site novo. O Custos reduz a exposição; não garante que nada passe.
+>
+> A interface da extensão está em inglês.
+>
+> Código aberto (MIT): https://github.com/PietroFilippo/Custos
 
 ## Screenshots to upload
 
