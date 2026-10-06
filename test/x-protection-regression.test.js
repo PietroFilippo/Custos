@@ -219,10 +219,10 @@ test('an X sensitivity flag hard-blocks before any visual classification', () =>
 test('the overlay and click blocker cover the full clickable photo/video cell', () => {
   assert.match(coordinator, /overlayHostFor/);
   assert.match(coordinator, /host\.appendChild\(overlay\)/);
-  assert.match(coordinator, /\.tabcloser-overlay-host'\)/, 'click blocker must include the overlay host');
-  assert.doesNotMatch(stylesheet, /\.tabcloser-overlay-host \{[^}]*position: relative !important/,
+  assert.match(coordinator, /\[data-tabcloser-overlay-host\]'\)/, 'click blocker must include the overlay host');
+  assert.doesNotMatch(stylesheet, /\[data-tabcloser-overlay-host\] \{[^}]*position: relative !important/,
     'the base host must preserve X grid anchors that are already positioned');
-  assert.match(stylesheet, /\.tabcloser-overlay-host-static \{[^}]*position: relative !important/,
+  assert.match(stylesheet, /\[data-tabcloser-overlay-host="static"\] \{[^}]*position: relative !important/,
     'only static hosts receive the positioning fallback');
 });
 

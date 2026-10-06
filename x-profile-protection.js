@@ -170,20 +170,20 @@
       alias.style[property] = computed[property];
     }
     target.dataset.tabcloserAliasFor = handle;
-    target.classList.add('tabcloser-name-hidden');
+    target.dataset.tabcloserHide = 'name';
     target.insertAdjacentElement('beforebegin', alias);
     marked.add(alias);
     marked.add(target);
   }
 
-  function hideFor(element, className, handle) {
-    element.classList.add(className);
+  function hideFor(element, what, handle) {
+    element.dataset.tabcloserHide = what;
     element.dataset.tabcloserAliasFor = handle;
     marked.add(element);
   }
 
   function restoreName(name) {
-    name.classList.remove('tabcloser-name-hidden');
+    delete name.dataset.tabcloserHide;
     delete name.dataset.tabcloserAliasFor;
   }
 
@@ -207,7 +207,7 @@
     if (node.matches('a')) return (node.getAttribute('href') || '').toLowerCase() === '/' + handle;
     if (node.matches('article')) return authorHandle(node) === handle;
     const container = node.closest(nameContainerSelector);
-    if (!container || node.matches('.tabcloser-bio-hidden')) return true;
+    if (!container || node.dataset.tabcloserHide === 'bio') return true;
     const current = handleWithin(container);
     return !current || current === handle;
   }
@@ -220,21 +220,26 @@
       if (node.classList.contains('tabcloser-alias')) {
         const name = node.nextElementSibling;
         const nameHandle = name?.dataset.tabcloserAliasFor;
-        if (!name?.classList.contains('tabcloser-name-hidden') || !nameApplies(nameHandle) || !ownerMatches(name, nameHandle)) {
+        // X can redraw a name's attributes (its hover underline does): an
+        // alias whose name still applies hides it again instead of leaving.
+        if (name && nameHandle && name.dataset.tabcloserHide !== 'name' && nameApplies(nameHandle) && ownerMatches(name, nameHandle)) {
+          name.dataset.tabcloserHide = 'name';
+        }
+        if (name?.dataset.tabcloserHide !== 'name' || !nameApplies(nameHandle) || !ownerMatches(name, nameHandle)) {
           node.remove();
           marked.delete(node);
         } else if (node.textContent !== aliasFor(nameHandle)) {
           node.textContent = aliasFor(nameHandle);
         }
-      } else if (node.classList.contains('tabcloser-name-hidden')) {
+      } else if (node.dataset.tabcloserHide === 'name') {
         if (!node.previousElementSibling?.classList.contains('tabcloser-alias') || !nameApplies(handle) || !ownerMatches(node, handle)) {
           restoreName(node);
           marked.delete(node);
         }
-      } else if (node.matches('.tabcloser-handle-hidden, .tabcloser-bio-hidden')) {
+      } else if (node.dataset.tabcloserHide === 'handle' || node.dataset.tabcloserHide === 'bio') {
         if (!nameApplies(handle) || !ownerMatches(node, handle)) {
           if (node.previousElementSibling?.classList.contains('tabcloser-bio-notice')) node.previousElementSibling.remove();
-          node.classList.remove('tabcloser-handle-hidden', 'tabcloser-bio-hidden');
+          delete node.dataset.tabcloserHide;
           delete node.dataset.tabcloserAliasFor;
           marked.delete(node);
         }
@@ -253,17 +258,17 @@
       const handle = handleWithin(container);
       if (!nameApplies(handle)) continue;
       const name = nameElement(container);
-      if (name && !name.classList.contains('tabcloser-name-hidden')) showAlias(name, handle);
+      if (name && name.dataset.tabcloserHide !== 'name') showAlias(name, handle);
       // Handles of adult accounts are often explicit too, so they go as well.
       for (const node of container.querySelectorAll('div[dir], span')) {
-        if (!node.closest('.tabcloser-handle-hidden, .tabcloser-alias') && textOf(node).toLowerCase() === '@' + handle) {
-          hideFor(node, 'tabcloser-handle-hidden', handle);
+        if (!node.closest('[data-tabcloser-hide="handle"], .tabcloser-alias') && textOf(node).toLowerCase() === '@' + handle) {
+          hideFor(node, 'handle', handle);
         }
       }
     }
     // Mentions and "Replying to @handle" links read as the alias.
     for (const link of within(target, 'a[href^="/"]')) {
-      if (link.classList.contains('tabcloser-name-hidden') || link.closest(nameContainerSelector + ', .tabcloser-controls')) continue;
+      if (link.dataset.tabcloserHide === 'name' || link.closest(nameContainerSelector + ', .tabcloser-controls')) continue;
       const handle = (link.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]{1,15})$/)?.[1].toLowerCase();
       if (nameApplies(handle) && textOf(link).toLowerCase() === '@' + handle) showAlias(link, handle);
     }
@@ -277,7 +282,7 @@
     const hoverCards = document.querySelectorAll('[data-testid="HoverCard"]');
     if (!nameApplies(pageHandle) && !hoverCards.length) return;
     if (nameApplies(pageHandle)) {
-      const names = new Set([...marked].filter(node => node.classList.contains('tabcloser-name-hidden') &&
+      const names = new Set([...marked].filter(node => node.dataset.tabcloserHide === 'name' &&
         node.dataset.tabcloserAliasFor === pageHandle && !node.matches('a')).map(textOf).filter(Boolean));
       for (const heading of document.querySelectorAll('h2[role="heading"]')) {
         const child = heading.children.length === 1 ? heading.firstElementChild : null;
@@ -287,8 +292,8 @@
     for (const bio of document.querySelectorAll('[data-testid="UserDescription"], [data-testid="UserUrl"]')) {
       const card = bio.closest('[data-testid="HoverCard"]');
       const owner = card ? handleWithin(card) : pageHandle;
-      if (bio.classList.contains('tabcloser-bio-hidden') || !nameApplies(owner)) continue;
-      hideFor(bio, 'tabcloser-bio-hidden', owner);
+      if (bio.dataset.tabcloserHide === 'bio' || !nameApplies(owner)) continue;
+      hideFor(bio, 'bio', owner);
       if (bio.matches('[data-testid="UserDescription"]')) {
         const notice = document.createElement('div');
         notice.className = 'tabcloser-controls tabcloser-bio-notice';

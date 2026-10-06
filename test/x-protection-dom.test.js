@@ -158,7 +158,7 @@ test('a native X mature-content warning tile is replaced and cannot open the pos
     assert.equal(tile.dataset.tabcloserMediaReason, 'metadata');
     assert.ok(tile.querySelector('.tabcloser-media-overlay-art'), 'warning tile should show replacement art');
     assert.ok(tile.querySelector('.tabcloser-overlay-artwork'), 'the full painting should render above its fill backdrop');
-    assert.ok(tile.classList.contains('tabcloser-overlay-host-static'), 'a genuinely static host needs the positioning fallback');
+    assert.ok(tile.getAttribute('data-tabcloser-overlay-host') === 'static', 'a genuinely static host needs the positioning fallback');
 
     const click = new harness.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
     assert.equal(tile.dispatchEvent(click), false, 'protected warning tile navigation must be canceled');
@@ -508,7 +508,7 @@ test('outer tweet metadata does not censor a safe quoted tweet in the same artic
     assert.equal(outer.dataset.tabcloserMediaState, 'protected');
     assert.equal(quoted.dataset.tabcloserMediaState, 'safe', 'nested quoted media belongs to a separate tweet layer');
     assert.equal(quotedText.dataset.tabcloserQuoted, undefined);
-    assert.equal(quotedText.classList.contains('tabcloser-hidden-text'), false);
+    assert.equal(quotedText.hasAttribute('data-tabcloser-hidden-text'), false);
     assert.equal(harness.window.document.querySelector('.tabcloser-quote'), null);
   } finally {
     harness.dom.window.close();
@@ -656,8 +656,8 @@ test('an absolutely positioned X grid anchor keeps its positioning', async () =>
 
   try {
     const tile = harness.window.document.getElementById('absolute-tile');
-    assert.ok(tile.classList.contains('tabcloser-overlay-host'));
-    assert.equal(tile.classList.contains('tabcloser-overlay-host-static'), false);
+    assert.ok(tile.hasAttribute('data-tabcloser-overlay-host'));
+    assert.equal(tile.getAttribute('data-tabcloser-overlay-host') === 'static', false);
     assert.equal(harness.window.getComputedStyle(tile).position, 'absolute');
   } finally {
     harness.dom.window.close();
@@ -1149,7 +1149,7 @@ test('post text is replaced when the media viewer lives outside the tweet articl
     const article = harness.window.document.getElementById('detail-article');
     const text = article.querySelector('[data-testid="tweetText"]');
     assert.equal(text.dataset.tabcloserQuoted, 'yes', 'the article located by status ID must have its text replaced');
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     assert.ok(article.querySelector('.tabcloser-quote'), 'a quote must replace the post text');
   } finally {
     harness.dom.window.close();
@@ -1260,7 +1260,7 @@ test('legacy post hides cover content only and isolate quoted posts', async () =
   });
   try {
     assert.equal(h.window.document.getElementById('quoted').dataset.tabcloserMediaState, undefined);
-    assert.ok(h.window.document.querySelector('#quoted [data-testid="tweetText"]').classList.contains('tabcloser-hidden-text'));
+    assert.ok(h.window.document.querySelector('#quoted [data-testid="tweetText"]').hasAttribute('data-tabcloser-hidden-text'));
     assert.ok(h.window.document.querySelector('#quoted .tabcloser-manual-text-notice'));
     assert.equal(h.window.document.getElementById('outer').dataset.tabcloserMediaState, undefined);
   } finally { h.dom.window.close(); }
@@ -1770,7 +1770,7 @@ test('manual text is independent of media and remains hidden across protection c
   });
   try {
     let text=h.window.document.querySelector('[data-testid="tweetText"]');
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     assert.equal(h.window.document.getElementById('controlled-image').dataset.tabcloserMediaState,undefined);
     assert.equal(h.window.document.querySelector('article').dataset.tabcloserMediaState,undefined);
     h.window.document.querySelector('.tabcloser-manual-text-notice button').click();
@@ -1783,13 +1783,13 @@ test('manual text is independent of media and remains hidden across protection c
     await flush(h.window,3);
     assert.equal(text.hasAttribute('data-tabcloser-text-revealed'),false);
     await h.sendContentMessage({type:'xProtectionChanged',xProtection:{}});
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     h.window.document.body.innerHTML=controlFixture;
     await flush(h.window,60);
     text=h.window.document.querySelector('[data-testid="tweetText"]');
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     await h.sendContentMessage({type:'xControlsChanged',snapshot:{posts:[],texts:[],media:[]}});
-    assert.equal(text.classList.contains('tabcloser-hidden-text'),false);
+    assert.equal(text.hasAttribute('data-tabcloser-hidden-text'),false);
     assert.equal(h.window.document.querySelector('.tabcloser-manual-text-notice'),null);
   } finally { h.dom.window.close(); }
 });
@@ -1893,7 +1893,7 @@ test('a quoted GIF thumbnail is a video thumbnail: its frames can release a fals
     await flush(h.window, 24);
     assert.equal(thumb.dataset.tabcloserMediaState, 'safe', 'safe GIF frames overrule the thumbnail, as in the detail view');
     assert.ok(h.classificationMessages.some(message => message.kind === 'frame'));
-    assert.equal(h.window.document.querySelector('#quote-card [data-testid="tweetText"]').classList.contains('tabcloser-hidden-text'), false);
+    assert.equal(h.window.document.querySelector('#quote-card [data-testid="tweetText"]').hasAttribute('data-tabcloser-hidden-text'), false);
   } finally { h.dom.window.close(); }
 });
 
@@ -2024,10 +2024,10 @@ test('a manual text hide follows a post into a reused element', async () => {
     controlMessage: () => ({ ok: true, posts: [], texts: ['999'], media: [], revealDailySec: 0 }) });
   try {
     const text = h.window.document.querySelector('[data-testid="tweetText"]');
-    assert.equal(text.classList.contains('tabcloser-hidden-text'), false);
+    assert.equal(text.hasAttribute('data-tabcloser-hidden-text'), false);
     for (const link of h.window.document.querySelectorAll('a[href*="/status/123"]')) link.setAttribute('href', link.getAttribute('href').replace('123', '999'));
     await new Promise(resolve => h.window.setTimeout(resolve, 120));
-    assert.ok(text.classList.contains('tabcloser-hidden-text'), 'X reused the element for the hidden post');
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'), 'X reused the element for the hidden post');
   } finally { h.dom.window.close(); }
 });
 
