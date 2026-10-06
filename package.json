@@ -1,18 +1,21 @@
 {
-  "name": "tabcloser",
-  "version": "0.4.1",
+  "name": "custos",
+  "version": "0.5.0",
   "private": true,
+  "license": "MIT",
   "description": "Firefox and Zen extension for site timers, adult-site blocking, and local sensitive-media protection on X.",
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build.mjs",
     "lint:extension": "web-ext lint --source-dir dist",
     "package": "node scripts/package.mjs",
+    "package:source": "node scripts/package-source.mjs",
     "evaluate:model": "node scripts/evaluate-model.mjs",
     "update:adult-list": "node scripts/update-adult-list.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "4.22.0",
     "nsfwjs": "4.3.0"
   },
   "devDependencies": {

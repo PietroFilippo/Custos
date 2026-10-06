@@ -11,8 +11,8 @@ test('a locked rule with lockUnblock refuses early unblock in the background', (
   assert.match(background, /rule\?\.lockUnblock && isLockActive\(rule\.disableLockedUntil\)/,
     'the unblock handler must enforce the lock, not just the UI');
   assert.match(background, /lockUnblock: !!r\.lockUnblock/, 'saveRules must persist the flag');
-  assert.match(background, /replacement\.lockUnblock !== !!existing\.lockUnblock/,
-    'a locked rule must not allow toggling lockUnblock');
+  assert.match(background, /\(!existing\.lockUnblock \|\| replacement\.lockUnblock\)/,
+    'a locked rule must not allow turning lockUnblock off');
 });
 
 test('the options page exposes and respects the unblock lock', () => {

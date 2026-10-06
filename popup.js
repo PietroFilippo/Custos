@@ -38,48 +38,55 @@ function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+function lockChip(text) {
+  return el('span', { class: 'lock-chip' }, text);
+}
+
 function progressFor(rule, s) {
   const key = normalizeRuleDomain(rule.domain);
   const accum = s.accumSec[key] ?? 0;
   return Math.min(100, (accum / rule.closeAfterSec) * 100);
 }
 
-function renderActive(rule, s) {
+function renderActive(rule, s, now, compact = true) {
   const key = normalizeRuleDomain(rule.domain);
   const accum = s.accumSec[key] ?? 0;
   const limit = rule.closeAfterSec;
   const pct = progressFor(rule, s);
   const cls = pct > 90 ? 'danger' : pct > 60 ? 'warn' : '';
-
   const counting = s.focus?.domain === key && s.focus.enteredAt != null;
+  const locked = rule.disableLockedUntil > now;
 
-  return el('div', { class: 'row' + (counting ? ' active' : '') }, [
+  return el('div', { class: 'row' + (counting ? ' active' : '') + (compact ? ' compact' : '') }, [
     el('div', { class: 'row-top' }, [
       el('div', { class: 'dom', title: key }, key),
-      el('span', { class: 'status' + (counting ? ' counting' : '') }, counting ? 'Counting' : 'Paused'),
-    ]),
-    el('div', { class: 'row-detail' }, [
-      el('span', null, counting ? 'Time used' : 'Resumes when focused'),
-      el('span', { class: 'meta' }, `${formatDuration(accum)} / ${formatDuration(limit)}`),
+      locked ? lockChip('Locked') : null,
+      el('span', { class: 'pill' + (counting ? ' pill-counting' : '') }, counting ? 'Counting' : 'Paused'),
     ]),
     el('div', { class: 'bar' },
       el('div', { class: 'bar-fill' + (cls ? ' ' + cls : ''), style: `width:${pct}%` })
     ),
+    el('div', { class: 'row-detail' }, [
+      el('span', null, [el('strong', null, formatDuration(accum)), ' of ' + formatDuration(limit) + ' used']),
+      el('span', { class: 'meta' }, counting ? 'closes in ' + formatDuration(limit - accum)
+        : locked ? 'rule locked ' + formatTimeLeftShort(rule.disableLockedUntil - now) : 'resumes when focused'),
+    ]),
   ]);
 }
 
-function renderBlock(key, b, now, blockedBy = key) {
+function renderBlock(key, b, now, blockedBy = key, { compact = true, note = null } = {}) {
   const remaining = Math.max(0, (b.until - now) / 1000);
-  return el('div', { class: 'row blocked' }, [
+  return el('div', { class: 'row blocked' + (compact ? ' compact' : '') }, [
     el('div', { class: 'row-top' }, [
       el('div', { class: 'dom', title: key }, key),
-      el('span', { class: 'status' }, 'Blocked'),
+      el('span', { class: 'pill pill-blocked' }, 'Blocked'),
     ]),
     el('div', { class: 'row-detail' }, [
       el('span', { title: blockedBy !== key ? `Blocked by ${blockedBy}` : 'Includes subdomains' },
         blockedBy !== key ? `By ${blockedBy}` : 'Available in'),
       el('span', { class: 'meta countdown' }, formatDuration(remaining)),
     ]),
+    note ? el('p', { class: 'row-note' }, note) : null,
   ]);
 }
 
@@ -110,32 +117,42 @@ function renderProtection(s, enabled, now) {
   const adult = s.adultSites || {};
   const modelOn = model.enabled === true;
   const labelsOn = labeled.enabled === true;
-  const locks = [];
-  if (labelsOn && labeled.lockUntil > now) locks.push('Labels locked');
-  if (modelOn && model.lockUntil > now) locks.push('Classifier locked');
   const preset = ['lenient', 'balanced', 'strict'].includes(model.sensitivity) ? model.sensitivity : 'balanced';
-  const xDetail = modelOn ? `${labelsOn ? 'X labels + ' : ''}${preset} classifier` : labelsOn ? 'X labels only' : 'Automatic media protection off';
+  // The level lock is the classifier lock at the top level; otherwise a label
+  // lock still keeps protection from being switched off.
+  const xLock = modelOn && model.lockUntil > now ? lockChip('Locked ' + formatTimeLeftShort(model.lockUntil - now))
+    : labelsOn && labeled.lockUntil > now ? lockChip('Labels locked ' + formatTimeLeftShort(labeled.lockUntil - now)) : null;
   const lockedRules = enabled.filter(r => r.disableLockedUntil > now).length;
+  const blockedRules = enabled.filter(r => activeBlockForHost(s.blocks, normalizeRuleDomain(r.domain), now)).length;
+  const adultAttention = adult.enabled && !!adult.error;
   const summaries = [
-    { id: 'xOverview', name: 'X protection', value: modelOn || labelsOn ? 'On' : 'Off',
-      tone: modelOn || labelsOn ? 'on' : 'off', detail: xDetail + (locks.length ? ' · ' + locks.join(' · ') : '') },
-    { id: 'adultOverview', name: 'Adult websites', value: adult.error && adult.enabled ? 'Check settings' : adult.enabled ? 'On' : 'Off',
-      tone: adult.error && adult.enabled ? 'attention' : adult.enabled ? 'on' : 'off',
-      detail: adult.enabled ? adult.error ? 'Domain list unavailable · navigation held' : 'Known-domain blocking' + (adult.lockUntil > now ? ' · Locked' : '') : 'Known-domain blocking off' },
-    { id: 'timersOverview', name: 'Site timers', value: `${enabled.length} enabled`, tone: enabled.length ? 'on' : 'off',
-      detail: enabled.length ? 'Count only active tab time' + (lockedRules ? ` · ${lockedRules} locked` : '') : 'Add a site in settings to start' },
+    { id: 'xOverview', name: 'X protection', value: modelOn || labelsOn ? 'On' : 'Off', tone: modelOn || labelsOn ? 'on' : 'off',
+      detail: modelOn ? `${labelsOn ? 'Labels + ' : ''}classifier · ${preset[0].toUpperCase() + preset.slice(1)}` : labelsOn ? 'X labels only' : 'Automatic media protection off',
+      lock: xLock },
+    { id: 'adultOverview', name: 'Adult websites', value: adultAttention ? 'Attention' : adult.enabled ? 'On' : 'Off',
+      tone: adultAttention ? 'attention' : adult.enabled ? 'on' : 'off',
+      detail: adult.enabled ? adultAttention ? 'Domain list unavailable · navigation held'
+        : Number(adult.listCount || 0).toLocaleString() + ' known domains' + (adult.safeSearch ? ' · SafeSearch' : '') : 'Known-domain blocking off',
+      lock: adult.enabled && adult.lockUntil > now ? lockChip('Locked ' + formatTimeLeftShort(adult.lockUntil - now)) : null },
+    { id: 'timersOverview', name: 'Site timers', value: enabled.length ? `${enabled.length} enabled` : 'Off', tone: enabled.length ? 'on' : 'off',
+      detail: enabled.length ? [lockedRules ? `${lockedRules} locked` : null, blockedRules ? `${blockedRules} blocked` : null].filter(Boolean).join(' · ') || 'Count only active tab time'
+        : 'Add a site in settings to start' },
   ];
   // Only display configuration here. Changes, including locked settings, use
   // the existing settings page and background enforcement.
   document.getElementById('protection').replaceChildren(...summaries.map(item =>
-    el('div', { id: item.id, class: 'protection-item' }, [
-      el('div', { class: 'protection-heading' }, [
-        el('span', { class: 'protection-name' }, item.name),
-        el('span', { class: `protection-value ${item.tone}` }, item.value),
-      ]),
-      el('p', { class: 'protection-detail' }, item.detail),
+    el('li', { id: item.id, class: 'ov' }, [
+      el('span', { class: 'ov-name' }, item.name),
+      el('span', { class: 'pill' + (item.tone === 'on' ? ' pill-on' : item.tone === 'attention' ? ' pill-attention' : '') }, item.value),
+      el('span', { class: 'ov-detail' + (item.tone === 'attention' ? ' attention' : '') }, item.detail),
+      item.lock || null,
     ])
   ));
+  const summary = document.getElementById('headerSummary');
+  const allOn = (modelOn || labelsOn) && adult.enabled && enabled.length;
+  const anyOn = modelOn || labelsOn || adult.enabled || enabled.length;
+  summary.textContent = adultAttention ? 'Check settings' : allOn ? 'All protection on' : anyOn ? 'Partly on' : 'Protection off';
+  summary.className = 'header-summary' + (adultAttention ? ' attention' : allOn ? ' on' : '');
 }
 
 function renderState(s, page) {
@@ -154,27 +171,29 @@ function renderState(s, page) {
   const adultBlocked = page.adult && s.adultSites?.enabled;
   const currentRule = currentBlock || adultBlocked ? null : ruleForHost(enabled, host);
   const currentKey = currentRule ? normalizeRuleDomain(currentRule.domain) : host;
-  document.getElementById('currentDot').className = 'dot ' + (currentBlock || adultBlocked ? 'dot-amber'
-    : currentRule && s.focus?.domain === currentKey && s.focus.enteredAt != null ? 'dot-green' : 'dot-muted');
 
   // Current site — always shown.
   clear($current);
   if (adultBlocked) {
     $current.appendChild(el('div', { class: 'row blocked' }, [
-      el('div', { class: 'dom' }, host),
-      el('div', { class: 'row-detail' }, s.adultSites.error || 'Blocked by adult-site protection.'),
-      el('div', { class: 'meta' }, s.adultSites.lockUntil > now ? 'Settings locked until ' + new Date(s.adultSites.lockUntil).toLocaleString() : 'Manage in settings'),
+      el('div', { class: 'row-top' }, [el('div', { class: 'dom' }, host), el('span', { class: 'pill pill-blocked' }, 'Blocked')]),
+      el('div', { class: 'row-detail' }, el('span', null, s.adultSites.error || 'Blocked by adult-site protection.')),
+      el('p', { class: 'row-note' }, s.adultSites.lockUntil > now ? 'Protection is locked until ' + formatLockDate(s.adultSites.lockUntil) + '.' : 'Manage it in settings.'),
     ]));
   } else if (currentBlock) {
-    $current.appendChild(renderBlock(currentKey, currentBlock.block, now, currentBlock.key));
+    const blockingRule = s.rules.find(r => normalizeRuleDomain(r.domain) === currentBlock.key);
+    const unblockLocked = blockingRule?.lockUnblock && blockingRule.disableLockedUntil > now;
+    $current.appendChild(renderBlock(currentKey, currentBlock.block, now, currentBlock.key, {
+      compact: false, note: unblockLocked ? 'Early unblock is locked for this rule.' : null,
+    }));
   } else if (currentRule) {
-    $current.appendChild(renderActive(currentRule, s));
+    $current.appendChild(renderActive(currentRule, s, now, false));
   } else {
-    $current.appendChild(el('div', { class: 'row muted-row' }, [
-      el('div', { class: 'dom', title: host }, host || 'Browser page'),
-      el('div', { class: 'row-detail' }, host
+    $current.appendChild(el('div', { class: 'row' }, [
+      el('div', { class: 'row-top' }, el('div', { class: 'dom', title: host }, host || 'Browser page')),
+      el('div', { class: 'row-detail' }, el('span', null, host
         ? (page.adult ? 'Adult-site protection is off.' : page.blockedPage ? 'Cooldown finished. You can return to the site.' : 'No timer for this site.')
-        : 'Timers run on websites, not internal pages.'),
+        : 'Timers run on websites, not internal pages.')),
     ]));
   }
 
@@ -186,7 +205,7 @@ function renderState(s, page) {
   $activeSection.hidden = !others.length;
   $activeCount.textContent = String(others.length);
   others.slice(0, showAllActive ? others.length : MAX_ROWS)
-    .forEach(r => $active.appendChild(renderActive(r, s)));
+    .forEach(r => $active.appendChild(renderActive(r, s, now)));
   updateOverflow($activeMore, others.length, showAllActive);
 
   // Blocked — soonest to unblock first.
@@ -222,6 +241,10 @@ document.getElementById('openOptions').addEventListener('click', () => {
   browser.runtime.openOptionsPage();
   window.close();
 });
+// Extensions do not run in private windows unless the user allows it there.
+browser.extension?.isAllowedIncognitoAccess?.()
+  .then(allowed => { document.getElementById('privateNote').hidden = allowed !== false; })
+  .catch(() => {});
 
 render();
 setInterval(render, 1000);

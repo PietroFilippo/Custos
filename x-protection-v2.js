@@ -1,10 +1,11 @@
 // X media coordinator. Modes: 'off'; 'labeled' hides only media X itself
 // marks mature; 'full' additionally classifies images, video posters, and up
 // to three frames from a detached low-bandwidth video probe. The visible X
-// player is never used, decoded, or seeked by TabCloser.
+// player is never used, decoded, or seeked by Custos.
 const xProtectionCoordinatorVersion = 'media-controls-v2';
 let mode = 'off';
-let settings = { replaceText: false, blockLike: false, sensitivity: 'balanced' };
+let settings = { replaceText: false, blockLike: false, sacredArt: false, groupMedia: false, sensitivity: 'balanced' };
+let protectionKey = null;
 let operationId = 0;
 const sensitiveUrls = new Set();
 const sensitiveTweetIds = new Set();
@@ -14,6 +15,10 @@ const sensitiveTweetIds = new Set();
 // Safe verdicts are never stored here; only 'protect' promotes.
 const visuallyProtectedTweetIds = new Set();
 const directVideoSourcesByTweetId = new Map();
+// Per-video sources keyed by the normalized poster the page also renders.
+const directVideoSourcesByPoster = new Map();
+// Pending roots waiting for the IntersectionObserver; swept when X removes them.
+const observedRoots = new Set();
 const directVideoSourceWaitersByTweetId = new Map();
 const directVideoVerdictCache = new Map();
 const directVideoProbeInFlight = new Map();
@@ -26,13 +31,17 @@ const videoDecisionsByTweetId = new Map();
 const verifiedSafeMediaKeys = new Set();
 const warningPattern = /(?:sensitive content|content warning|warning\s*:\s*(?:nudity|adult content)|may contain sensitive|potentially sensitive)/i;
 const maxDirectVideoEntries = 500;
-const mediaSelector = '[data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"]';
+const maxSensitiveLabels = 5000;
+// Link-preview images are media cells too (never the whole card, whose text
+// and link must stay untouched).
+const mediaSelector = '[data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"], ' +
+  '[data-testid="card.layoutLarge.media"], [data-testid="card.layoutSmall.media"]';
 const mediaElementSelector = 'img[src], video, source[src]';
 const statusPathPattern = /\/status\/(\d+)(?:\/(?:photo|video)\/\d+)?/;
 const statusLinkSelector = 'a[href*="/status/"]';
 const extensionUiSelector = '.tabcloser-media-overlay, .tabcloser-lightbox, .tabcloser-controls';
 
-const xMetadataDebugPrefix = '[TabCloser DEBUG metadata-v1]';
+const xMetadataDebugPrefix = '[Custos DEBUG metadata-v1]';
 
 function xMetadataDebug(event, details = {}) {
   console.debug(xMetadataDebugPrefix, JSON.stringify({ event, ...details }));
@@ -83,13 +92,20 @@ function nativeWarningRootFor(node) {
   return warningPattern.test(link.textContent || '') ? link : null;
 }
 
+// Checked for every status link during discovery; parse the URL once per page.
+let mediaSearchHref = null;
+let mediaSearchPage = false;
 function isMediaSearchPage() {
-  try {
-    const page = new URL(location.href);
-    return page.pathname === '/search' && page.searchParams.get('f') === 'media';
-  } catch {
-    return false;
+  if (location.href !== mediaSearchHref) {
+    mediaSearchHref = location.href;
+    try {
+      const page = new URL(location.href);
+      mediaSearchPage = page.pathname === '/search' && page.searchParams.get('f') === 'media';
+    } catch {
+      mediaSearchPage = false;
+    }
   }
+  return mediaSearchPage;
 }
 
 function searchMediaRootFor(node) {
@@ -234,15 +250,47 @@ function overlayFor(root) {
   return [...overlayHostFor(root).children].find(child => child.classList?.contains('tabcloser-media-overlay')) || null;
 }
 
+// getComputedStyle forces a style recalculation of the page, so each host is
+// measured once when it first gets a cover, not on every redraw.
 function activateOverlayHost(host) {
+  if (host.classList.contains('tabcloser-overlay-host')) return;
   host.classList.add('tabcloser-overlay-host');
-  host.classList.remove('tabcloser-overlay-host-static');
   const position = getComputedStyle(host).position;
   if (!position || position === 'static') host.classList.add('tabcloser-overlay-host-static');
 }
 
 function clearOverlayHost(host) {
   host.classList.remove('tabcloser-overlay-host', 'tabcloser-overlay-host-static');
+}
+
+// CSS blur radii are absolute: a radius that erases a timeline thumbnail
+// leaves silhouettes readable in the full-screen viewer. The stylesheet
+// scales the blur from each hidden cell's shorter side.
+// Only protected media is tracked. X removes posts while scrolling; a
+// removed element reports a final zero size and is released here, so the
+// observer never keeps detached posts (and their images) alive.
+const blurSizeObserver = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.target.isConnected) blurSizeObserver.unobserve(entry.target);
+      else setBlurSize(entry.target, entry.contentRect);
+    }
+  })
+  : null;
+
+function setBlurSize(root, rect) {
+  const side = Math.min(rect?.width || 0, rect?.height || 0);
+  if (side > 0) root.style.setProperty('--tabcloser-media-side', Math.round(side) + 'px');
+}
+
+function trackBlurSize(root) {
+  setBlurSize(root, root.getBoundingClientRect?.());
+  blurSizeObserver?.observe(root);
+}
+
+function untrackBlurSize(root) {
+  blurSizeObserver?.unobserve(root);
+  root.style?.removeProperty('--tabcloser-media-side');
 }
 
 function hashString(value) {
@@ -331,12 +379,28 @@ function cellAspectBucketFor(root) {
   return aspectBucket(rect.width / rect.height);
 }
 
-// Deterministic per-media pick so re-renders never shuffle the artwork.
+// Each post keeps its painting for the session, even when X remounts it.
+const sacredArtByKey = new Map();
+
+// Paintings currently shown on the page, so two posts on screen never share one.
+function paintingsInUse() {
+  return new Set([...document.querySelectorAll('.tabcloser-media-overlay[data-tabcloser-art]')].map(overlay => overlay.dataset.tabcloserArt));
+}
+
+// Stable per-post pick: the hash chooses a starting painting; if another post
+// on the page already shows it, the next unused painting of the same shape is
+// taken. Re-renders never shuffle the artwork.
 function sacredArtUrlFor(root) {
   const artList = globalThis.TabCloserSacredArt || [];
   if (!artList.length) return null;
   const existing = sacredArtByRoot.get(root);
   if (existing) return existing;
+  const key = sacredArtKeyFor(root);
+  const remembered = sacredArtByKey.get(key);
+  if (remembered) {
+    sacredArtByRoot.set(root, remembered);
+    return remembered;
+  }
   const bucket = cellAspectBucketFor(root);
   const fitting = bucket
     ? artList.filter(entry => {
@@ -345,10 +409,24 @@ function sacredArtUrlFor(root) {
       })
     : [];
   const candidates = fitting.length ? fitting : artList;
-  const pick = candidates[hashString(sacredArtKeyFor(root)) % candidates.length];
-  const url = browser.runtime.getURL('assets/sacred-art/' + artEntryFile(pick));
+  const start = hashString(key) % candidates.length;
+  const inUse = paintingsInUse();
+  const urlOf = entry => browser.runtime.getURL('assets/sacred-art/' + artEntryFile(entry));
+  let url = urlOf(candidates[start]);
+  for (let step = 0; step < candidates.length; step += 1) {
+    const candidate = urlOf(candidates[(start + step) % candidates.length]);
+    if (!inUse.has(candidate)) { url = candidate; break; }
+  }
   sacredArtByRoot.set(root, url);
+  sacredArtByKey.set(key, url);
+  trimOldestMapEntries(sacredArtByKey, 2000);
   return url;
+}
+
+// The credit for a painting URL, from the generated art list.
+function paintingCredit(url) {
+  const file = decodeURIComponent(String(url).split('/').pop());
+  return (globalThis.TabCloserSacredArt || []).find(entry => typeof entry === 'object' && entry.file === file) || null;
 }
 
 // Clicking censored media opens our own viewer with the painting, never X's
@@ -364,12 +442,43 @@ function openLightbox(url) {
   closeLightbox();
   lightbox = document.createElement('div');
   lightbox.className = 'tabcloser-lightbox';
+  lightbox.setAttribute('role', 'dialog');
+  lightbox.setAttribute('aria-modal', 'true');
+  lightbox.setAttribute('aria-label', 'Painting shown in place of hidden media');
   const image = document.createElement('img');
   image.src = url;
   image.alt = 'Sacred art shown in place of hidden media';
-  lightbox.appendChild(image);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'tabcloser-lightbox-close';
+  close.textContent = 'Close';
+  const figure = document.createElement('figure');
+  figure.className = 'tabcloser-lightbox-figure';
+  figure.appendChild(image);
+  // Credit the work: title, artist, date, and the museum that shares it.
+  const credit = paintingCredit(url);
+  if (credit?.title) {
+    image.alt = credit.title + (credit.artist ? ', ' + credit.artist : '');
+    const caption = document.createElement('figcaption');
+    caption.className = 'tabcloser-lightbox-caption';
+    const title = document.createElement('strong');
+    title.textContent = credit.title;
+    caption.append(title, ' — ' + [credit.artist, credit.date].filter(Boolean).join(', ') + (credit.museum ? ' · ' : ''));
+    if (credit.museum) {
+      const link = document.createElement('a');
+      link.href = credit.url || '#';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = credit.museum;
+      link.addEventListener('click', event => event.stopPropagation());
+      caption.appendChild(link);
+    }
+    figure.appendChild(caption);
+  }
+  lightbox.append(figure, close);
   lightbox.addEventListener('click', closeLightbox);
   document.documentElement.appendChild(lightbox);
+  close.focus({ preventScroll: true });
 }
 
 document.addEventListener('keydown', event => {
@@ -421,6 +530,10 @@ function applyQuoteFor(root) {
   if (!article) return;
   const text = [...article.querySelectorAll('[data-testid="tweetText"]')]
     .find(candidate => tweetLayerFor(candidate, article) === layer);
+  // X can redraw the text element alone, leaving the old quote behind.
+  for (const orphan of article.querySelectorAll('.tabcloser-quote')) {
+    if (tweetLayerFor(orphan, article) === layer && !orphan.previousElementSibling?.matches('[data-tabcloser-quoted="yes"]')) orphan.remove();
+  }
   if (!text || text.dataset.tabcloserQuoted === 'yes') return;
   const quote = quoteForKey(statusId || text.textContent.slice(0, 40));
   if (!quote) return;
@@ -428,6 +541,11 @@ function applyQuoteFor(root) {
   text.classList.add('tabcloser-hidden-text');
   const block = document.createElement('div');
   block.className = 'tabcloser-quote';
+  // X sets its font on the text element itself, not its container; without
+  // this the quote falls back to the browser's default serif.
+  const computed = getComputedStyle(text);
+  block.style.fontFamily = computed.fontFamily;
+  block.style.fontSize = computed.fontSize;
   block.textContent = '“' + quote.text + '”';
   const author = document.createElement('div');
   author.className = 'tabcloser-quote-author';
@@ -436,14 +554,15 @@ function applyQuoteFor(root) {
   text.insertAdjacentElement('afterend', block);
 }
 
-function restoreArticleText(article) {
-  if (!(article instanceof Element)) return;
-  const text = article.querySelector('[data-testid="tweetText"]');
-  if (text) {
+// Restores the quote-replaced text of one tweet layer (the post itself, or a
+// quoted card inside it), leaving other layers and manual text hides alone.
+function restoreLayerText(article, layer) {
+  for (const text of article.querySelectorAll('[data-testid="tweetText"][data-tabcloser-quoted]')) {
+    if (tweetLayerFor(text, article) !== layer) continue;
     delete text.dataset.tabcloserQuoted;
     if (!text.hasAttribute('data-tabcloser-manual-text')) text.classList.remove('tabcloser-hidden-text');
+    if (text.nextElementSibling?.classList.contains('tabcloser-quote')) text.nextElementSibling.remove();
   }
-  article.querySelectorAll('.tabcloser-quote').forEach(quote => quote.remove());
 }
 
 function restoreAllArticleText() {
@@ -482,6 +601,17 @@ function restoreRootPlayback(root) {
   for (const player of mediaPlayersWithin(root)) restoreMediaPlayback(player);
 }
 
+// Like blocking follows the post's own media: a censored quoted card must not
+// block liking the post that quotes it.
+function ownMediaProtected(article) {
+  return !!article && [...article.querySelectorAll('[data-tabcloser-media-state="protected"]')]
+    .some(root => tweetLayerFor(root, article) === article);
+}
+
+function updateLikeBlock(article) {
+  if (article instanceof Element) article.toggleAttribute('data-tabcloser-like-blocked', ownMediaProtected(article));
+}
+
 function setRootState(root, state, reason) {
   if (!root?.isConnected) return;
   if (globalThis.TabCloserXInteractions?.manuallyHidden(root)) {
@@ -495,36 +625,49 @@ function setRootState(root, state, reason) {
   const article = root.closest('article');
   if (state === 'safe') {
     restoreRootPlayback(root);
+    untrackBlurSize(root);
     existing?.remove();
     clearOverlayHost(host);
-    // The protected element can live outside the article (media viewer), so a
-    // sibling release must also respect the tweet-level session verdict.
-    const articleTweetId = article ? statusIdFor(article) : null;
-    const tweetStillProtected = !!articleTweetId &&
-      (visuallyProtectedTweetIds.has(articleTweetId) || sensitiveTweetIds.has(articleTweetId));
-    if (article && !tweetStillProtected &&
-        !article.querySelector('[data-tabcloser-media-state="protected"]')) restoreArticleText(article);
+    // Text comes back per tweet layer: a released quoted card restores its own
+    // text without touching the quoting post. The protected element can live
+    // outside the article (media viewer), so a release must also respect the
+    // tweet-level session verdict.
+    if (article) {
+      const layer = tweetLayerFor(root, article);
+      const layerTweetId = statusIdFor(root);
+      const stillProtected = (!!layerTweetId &&
+        (visuallyProtectedTweetIds.has(layerTweetId) || sensitiveTweetIds.has(layerTweetId))) ||
+        [...article.querySelectorAll('[data-tabcloser-media-state="protected"]')].some(other => tweetLayerFor(other, article) === layer);
+      if (!stillProtected) restoreLayerText(article, layer);
+    }
+    updateLikeBlock(article);
     return;
   }
   activateOverlayHost(host);
+  if (state === 'protected') trackBlurSize(root);
+  else untrackBlurSize(root);
   const overlay = existing || document.createElement('div');
   // Pending media shows through heavily blurred behind a transparent click
-  // shield. The painting and notice are reserved for confirmed mature
+  // shield. The notice (and the optional painting) is reserved for confirmed
   // verdicts; a failure verdict that will still be retried renders like the
-  // pending state so a successful retry never pops artwork in and out.
-  const mature = reason === 'visual' || reason === 'metadata' || reason === 'manual';
+  // pending state so a successful retry never pops a notice in and out.
+  const mature = reason === 'visual' || reason === 'metadata' || reason === 'manual' || reason === 'group';
   const willRetry = state === 'protected' && !mature && retryableReason.test(reason || '') &&
     (rootRecords.get(root)?.retries || 0) < retryDelaysMs.length;
   const shieldOnly = state === 'pending' || willRetry;
-  const artUrl = state === 'protected' && mature ? sacredArtUrlFor(root) : null;
+  // Blur is the default cover. The painting is a presentation choice layered
+  // over the same blurred, protected media.
+  const artUrl = state === 'protected' && mature && settings.sacredArt ? sacredArtUrlFor(root) : null;
+  delete overlay.dataset.tabcloserArt;
   overlay.className = 'tabcloser-media-overlay' +
     (shieldOnly ? ' tabcloser-media-overlay-pending' : '') +
-    (artUrl ? ' tabcloser-media-overlay-art' : '');
+    (artUrl ? ' tabcloser-media-overlay-art' : '') +
+    (!shieldOnly && !artUrl ? ' tabcloser-media-overlay-blur' : '');
   overlay.style.backgroundImage = '';
   overlay.setAttribute('role', 'group');
   overlay.setAttribute('aria-live', 'polite');
   const hiddenLabel = reason === 'manual' ? 'Hidden by you' : mature ? 'Sensitive media hidden' : 'Could not check media';
-  overlay.setAttribute('aria-label', shieldOnly ? 'Media is being checked by TabCloser' : hiddenLabel + ' by TabCloser');
+  overlay.setAttribute('aria-label', shieldOnly ? 'Media is being checked by Custos' : hiddenLabel + ' by Custos');
   overlay.textContent = '';
   if (artUrl) {
     // Two layers, one image: a blurred cover backdrop fills the letterbox
@@ -540,6 +683,7 @@ function setRootState(root, state, reason) {
     overlay.appendChild(backdrop);
     overlay.appendChild(artwork);
     paintArtworkWhenReady(artUrl, [backdrop, artwork]);
+    overlay.dataset.tabcloserArt = artUrl;
   }
   if (!shieldOnly) {
     const label = document.createElement('span');
@@ -551,6 +695,7 @@ function setRootState(root, state, reason) {
   if (!existing) host.appendChild(overlay);
   if (state === 'protected' && mature && reason !== 'manual') applyQuoteFor(root);
   for (const player of mediaPlayersWithin(root)) blockMediaPlayback(player);
+  updateLikeBlock(article);
   globalThis.TabCloserXInteractions?.decorate(root, state, reason);
 }
 
@@ -559,8 +704,10 @@ function clearAllStates() {
   restoreAllArticleText();
   document.querySelectorAll('.tabcloser-media-overlay').forEach(overlay => overlay.remove());
   document.querySelectorAll('.tabcloser-overlay-host').forEach(clearOverlayHost);
+  document.querySelectorAll('[data-tabcloser-like-blocked]').forEach(article => article.removeAttribute('data-tabcloser-like-blocked'));
   document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
     restoreRootPlayback(root);
+    untrackBlurSize(root);
     delete root.dataset.tabcloserMediaState;
     delete root.dataset.tabcloserMediaReason;
   });
@@ -682,12 +829,15 @@ function rememberDirectVideoSource(tweetId, source) {
   directVideoSourcesByTweetId.delete(id);
   directVideoSourcesByTweetId.set(id, source);
   trimOldestMapEntries(directVideoSourcesByTweetId);
-  const waiters = directVideoSourceWaitersByTweetId.get(id);
-  if (waiters) {
-    directVideoSourceWaitersByTweetId.delete(id);
-    for (const resolve of waiters) resolve(source);
-  }
+  wakeDirectVideoWaiters(id, source);
   return true;
+}
+
+function wakeDirectVideoWaiters(tweetId, source) {
+  const waiters = directVideoSourceWaitersByTweetId.get(tweetId);
+  if (!waiters) return;
+  directVideoSourceWaitersByTweetId.delete(tweetId);
+  for (const resolve of waiters) resolve(source);
 }
 
 function waitForDirectVideoSource(tweetId, timeoutMs = 1500) {
@@ -711,14 +861,25 @@ function waitForDirectVideoSource(tweetId, timeoutMs = 1500) {
   });
 }
 
+function posterKeyFor(root) {
+  const poster = mediaElementsWithin(root, 'video').map(video => video.poster).find(Boolean) ||
+    mediaElementsWithin(root, 'img[src]').map(image => image.currentSrc || image.src)
+      .find(src => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(src));
+  return poster ? TabCloserXMetadata.normalizeMediaUrl(poster) : null;
+}
+
 async function directVideoSourceForRoot(root, waitForDetail) {
+  const byPoster = directVideoSourcesByPoster.get(posterKeyFor(root));
+  if (byPoster) return byPoster;
   const tweetId = statusIdFor(root);
   if (!tweetId) return null;
   const existing = directVideoSourcesByTweetId.get(tweetId);
   if (existing) return existing;
   const pageTweetId = statusIdFromHref(location.pathname);
   if (!waitForDetail || pageTweetId !== tweetId) return null;
-  return waitForDirectVideoSource(tweetId);
+  const waited = await waitForDirectVideoSource(tweetId);
+  // Multi-video posts only arrive keyed by poster; look again after waking.
+  return directVideoSourcesByPoster.get(posterKeyFor(root)) || waited;
 }
 
 function detachedVideoSampleTimes(duration, fractions) {
@@ -1001,6 +1162,123 @@ function scheduleRetry(root) {
 // false positive must not censor innocent neighbors. Failure verdicts
 // (couldn't check) are also root-scoped so a retry can release them. Only X's
 // own tweet-level label ('metadata') hides every media cell in that tweet layer.
+// "Hide all of a post's media when one is hidden": media keys hidden by a
+// classifier verdict, per tweet. Any other media of that tweet is hidden too,
+// with the reason 'group'. A quoted card is its own tweet, so it never hides
+// the post that quotes it, or the reverse.
+const groupTriggersByTweetId = new Map();
+// Safe media waiting for the rest of its post to be checked.
+const heldRoots = new Set();
+let heldTimer = null;
+
+function groupKeyFor(root) {
+  return stableMediaVerificationKey(root) || rootFingerprint(root);
+}
+
+function groupProtects(root) {
+  if (!settings.groupMedia) return false;
+  const triggers = groupTriggersByTweetId.get(statusIdFor(root));
+  if (!triggers) return false;
+  const own = groupKeyFor(root);
+  return [...triggers].some(key => key !== own);
+}
+
+function layerSiblings(root) {
+  const article = root.closest('article');
+  if (!article) return [];
+  const layer = tweetLayerFor(root, article);
+  const tweetId = statusIdFor(root);
+  return candidateRootsWithin(layer).filter(candidate => candidate !== root && tweetLayerFor(candidate, article) === layer &&
+    statusIdFor(candidate) === tweetId);
+}
+
+// Siblings still being checked (held siblings already passed their own check).
+function siblingsUndecided(root) {
+  return layerSiblings(root).some(sibling => {
+    const state = sibling.dataset.tabcloserMediaState;
+    return (!state || state === 'pending') && rootRecords.get(sibling)?.status !== 'held';
+  });
+}
+
+function spreadToSiblings(root) {
+  if (!settings.groupMedia) return;
+  const tweetId = statusIdFor(root);
+  if (!tweetId) return;
+  const triggers = groupTriggersByTweetId.get(tweetId) || new Set();
+  triggers.add(groupKeyFor(root));
+  groupTriggersByTweetId.delete(tweetId);
+  groupTriggersByTweetId.set(tweetId, triggers);
+  trimOldestMapEntries(groupTriggersByTweetId, 500);
+  for (const sibling of layerSiblings(root)) {
+    const reason = sibling.dataset.tabcloserMediaReason;
+    if (sibling.dataset.tabcloserMediaState === 'protected' && ['visual', 'metadata', 'manual', 'group'].includes(reason)) continue;
+    if (groupProtects(sibling)) setRootState(sibling, 'protected', 'group');
+  }
+  settleHeldRoots();
+}
+
+// When the media that hid its post is released (for example by a "Not
+// sensitive" mark), the media hidden only because of it is checked again.
+function dropGroupTrigger(root) {
+  const tweetId = statusIdFor(root);
+  const triggers = groupTriggersByTweetId.get(tweetId);
+  if (!triggers?.delete(groupKeyFor(root))) return;
+  if (!triggers.size) groupTriggersByTweetId.delete(tweetId);
+  document.querySelectorAll('[data-tabcloser-media-reason="group"]').forEach(other => {
+    if (statusIdFor(other) !== tweetId || groupProtects(other)) return;
+    const record = rootRecords.get(other);
+    if (record) record.status = 'stale';
+    discoverRoot(other);
+  });
+}
+
+// With the option on, safe media waits (still covered) until every other
+// media item of its post has a verdict, so one never shows before another
+// hides it.
+function releaseSafe(root, reason, remember) {
+  if (groupProtects(root)) {
+    setRootState(root, 'protected', 'group');
+    return;
+  }
+  const record = rootRecords.get(root);
+  if (settings.groupMedia && record && siblingsUndecided(root)) {
+    record.status = 'held';
+    record.release = { reason, remember };
+    heldRoots.add(root);
+    heldTimer ??= setInterval(settleHeldRoots, 500);
+    return;
+  }
+  if (remember) rememberVerifiedSafeMedia(root);
+  dropGroupTrigger(root);
+  setRootState(root, 'safe', reason);
+}
+
+function settleHeldRoots() {
+  for (const root of [...heldRoots]) {
+    const record = rootRecords.get(root);
+    if (record?.status !== 'held' || !root.isConnected || root.dataset.tabcloserMediaState !== 'pending') {
+      heldRoots.delete(root);
+      continue;
+    }
+    if (groupProtects(root)) {
+      heldRoots.delete(root);
+      record.status = 'grouped';
+      setRootState(root, 'protected', 'group');
+      continue;
+    }
+    if (siblingsUndecided(root)) continue;
+    heldRoots.delete(root);
+    record.status = 'safe';
+    if (record.release?.remember) rememberVerifiedSafeMedia(root);
+    dropGroupTrigger(root);
+    setRootState(root, 'safe', record.release?.reason || 'visual');
+  }
+  if (!heldRoots.size && heldTimer != null) {
+    clearInterval(heldTimer);
+    heldTimer = null;
+  }
+}
+
 function protectUnsafeResult(root, reason) {
   if (reason === 'metadata') {
     protectGroup(root, reason);
@@ -1029,7 +1307,14 @@ async function classifyRoot(root, fingerprint, token) {
     if (root.matches('video')) videos.unshift(root);
     if (!images.length && !videos.length) throw new Error('no classifiable media');
 
-    const isVideo = videos.length > 0 || images.some(image => /\/(?:amplify|ext_tw)_video_thumb\//.test(image.src));
+    // GIFs are videos too: timeline quote cards show only their tweet_video_thumb
+    // image, and a noisy thumbnail must be overrulable by the GIF's frames.
+    const isVideo = videos.length > 0 || images.some(image => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(image.src));
+    // An image the user marked "Not sensitive" (once its day-long wait has
+    // passed) is released despite a classifier verdict. X labels and manual
+    // hides still win: they are checked before and after this point.
+    const markedSafe = !isVideo && !!globalThis.TabCloserXInteractions?.markedNotSensitive?.(root);
+    let releasedByMark = false;
     let thumbnailVerdict = null;
     let videoUnavailableReason = '';
     const recordDecision = (result, source) => rootDecisions.set(root, {
@@ -1045,8 +1330,13 @@ async function classifyRoot(root, fingerprint, token) {
           thumbnailVerdict = result;
           continue;
         }
+        if (markedSafe && result.reason === 'visual') {
+          releasedByMark = true;
+          continue;
+        }
         recordDecision(result, 'image');
         protectUnsafeResult(root, result.reason || 'visual');
+        if ((result.reason || 'visual') === 'visual') spreadToSiblings(root);
         return;
       }
     }
@@ -1099,6 +1389,7 @@ async function classifyRoot(root, fingerprint, token) {
           protectGroup(root, 'visual');
         } else {
           protectUnsafeResult(root, result.reason || 'visual');
+          if ((result.reason || 'visual') === 'visual') spreadToSiblings(root);
         }
         return;
       }
@@ -1110,6 +1401,7 @@ async function classifyRoot(root, fingerprint, token) {
     if (thumbnailVerdict) {
       recordDecision({ ...thumbnailVerdict, fallback: directVideoSource ? 'Video check unavailable: ' + videoUnavailableReason : 'No direct video source available' }, 'video thumbnail');
       protectUnsafeResult(root, 'visual');
+      spreadToSiblings(root);
       return;
     }
     ensureClassificationActive(isActive);
@@ -1117,7 +1409,11 @@ async function classifyRoot(root, fingerprint, token) {
       discoverRoot(root);
       return;
     }
-    if (metadataProtects(root) || root.dataset.tabcloserMediaState === 'protected') {
+    if (!metadataProtects(root) && groupProtects(root)) {
+      setRootState(root, 'protected', 'group');
+      return;
+    }
+    if (metadataProtects(root) || (root.dataset.tabcloserMediaState === 'protected' && root.dataset.tabcloserMediaReason !== 'group')) {
       protectGroup(root, root.dataset.tabcloserMediaReason || 'metadata');
       return;
     }
@@ -1125,7 +1421,6 @@ async function classifyRoot(root, fingerprint, token) {
       protectGroup(root, 'visual');
       return;
     }
-    rememberVerifiedSafeMedia(root);
     const pageStatusId = statusIdFromHref(location.pathname);
     if (pageStatusId) {
       const rootStatusId = statusIdFor(root);
@@ -1139,7 +1434,9 @@ async function classifyRoot(root, fingerprint, token) {
         knownSensitiveTweet: !!rootStatusId && sensitiveTweetIds.has(rootStatusId),
       });
     }
-    setRootState(root, 'safe', 'visual');
+    // A release by mark is never cached as verified safe: removing the mark
+    // must bring the cover back.
+    releaseSafe(root, releasedByMark ? 'marked' : 'visual', !releasedByMark);
   } catch (error) {
     if (isActive()) {
       protectUnsafeResult(root, /timeout/i.test(error?.message || '') ? 'timeout' : 'error');
@@ -1160,6 +1457,7 @@ function drainClassificationQueue() {
     activeClassifications += 1;
     classifyRoot(task.root, task.fingerprint, task.token).finally(() => {
       activeClassifications -= 1;
+      if (heldRoots.size) settleHeldRoots();
       setTimeout(drainClassificationQueue, 0);
     });
   }
@@ -1174,6 +1472,7 @@ const intersectionObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
     if (!entry.isIntersecting || mode !== 'full') continue;
     intersectionObserver.unobserve(entry.target);
+    observedRoots.delete(entry.target);
     const record = rootRecords.get(entry.target);
     if (record?.status === 'pending') queueRootClassification(entry.target, record);
   }
@@ -1205,10 +1504,16 @@ function discoverRoot(root) {
     protectGroup(root, 'visual');
     return;
   }
+  if (groupProtects(root)) {
+    const token = ++operationId;
+    rootRecords.set(root, { fingerprint, status: 'grouped', token, retries: 0 });
+    setRootState(root, 'protected', 'group');
+    return;
+  }
   if (hasVerifiedSafeMedia(root)) {
     const token = ++operationId;
     rootRecords.set(root, { fingerprint, status: 'safe', token, retries: 0 });
-    setRootState(root, 'safe', 'visual');
+    releaseSafe(root, 'visual', false);
     return;
   }
   const previous = rootRecords.get(root);
@@ -1218,7 +1523,7 @@ function discoverRoot(root) {
     // React may rebuild the text node without touching the media; re-apply
     // the quote (idempotent) for confirmed-mature roots.
     const reason = root.dataset.tabcloserMediaReason;
-    if (domState === 'protected' && (reason === 'visual' || reason === 'metadata')) applyQuoteFor(root);
+    if (domState === 'protected' && (reason === 'visual' || reason === 'metadata' || reason === 'group')) applyQuoteFor(root);
     return;
   }
   const token = ++operationId;
@@ -1228,11 +1533,39 @@ function discoverRoot(root) {
   rootRecords.set(root, { fingerprint, status: 'pending', token, retries });
   setRootState(root, 'pending', 'pending');
   if (metadataProtects(root)) protectGroup(root, 'metadata');
-  else intersectionObserver.observe(root);
+  else {
+    intersectionObserver.observe(root);
+    observedRoots.add(root);
+  }
 }
 
 function discoverWithin(container) {
   for (const root of candidateRootsWithin(container)) discoverRoot(root);
+  // X can redraw a post's text without touching its media: put the quote
+  // back for a layer whose media is already hidden.
+  if (settings.replaceText && container instanceof Element) {
+    const texts = [...container.querySelectorAll('[data-testid="tweetText"]')];
+    const own = container.closest('[data-testid="tweetText"]');
+    if (own) texts.push(own);
+    for (const text of texts) {
+      const article = text.closest('article');
+      if (!article || text.dataset.tabcloserQuoted === 'yes') continue;
+      const layer = tweetLayerFor(text, article);
+      const hidden = [...article.querySelectorAll('[data-tabcloser-media-state="protected"]')].find(root =>
+        tweetLayerFor(root, article) === layer && /^(?:visual|metadata)$/.test(root.dataset.tabcloserMediaReason || ''));
+      if (hidden) applyQuoteFor(hidden);
+    }
+  }
+}
+
+// X virtualizes timelines: pending media removed before it was ever near the
+// viewport must not stay registered with the observer.
+function sweepObservedRoots() {
+  for (const root of observedRoots) {
+    if (root.isConnected) continue;
+    intersectionObserver.unobserve(root);
+    observedRoots.delete(root);
+  }
 }
 
 const discoveryQueue = new Set();
@@ -1255,6 +1588,7 @@ function flushDiscoveryQueue() {
   }
   discoveryQueue.clear();
   for (const container of containers) discoverWithin(container);
+  if (observedRoots.size) sweepObservedRoots();
 }
 
 function queueDiscovery(container) {
@@ -1266,7 +1600,16 @@ function queueDiscovery(container) {
 function scanKnownRootsForMetadata() {
   const roots = new Set();
   const matchedRoots = [];
-  document.querySelectorAll('[data-tabcloser-media-state], ' + mediaSelector).forEach(node => {
+  const nodes = [...document.querySelectorAll('[data-tabcloser-media-state], ' + mediaSelector)];
+  // Media-search tiles carry no media test id; in labels-only mode they are
+  // never marked before a label arrives, so they are looked up directly.
+  if (isMediaSearchPage()) {
+    for (const link of document.querySelectorAll(statusLinkSelector)) {
+      const tile = searchMediaRootFor(link);
+      if (tile) nodes.push(tile);
+    }
+  }
+  nodes.forEach(node => {
     const root = mediaRootFor(node) || node;
     if (roots.has(root)) return;
     roots.add(root);
@@ -1281,16 +1624,39 @@ function scanKnownRootsForMetadata() {
   return { rootsScanned: roots.size, matchedRoots: matchedRoots.slice(0, 20) };
 }
 
+// Redraws covers after a presentation-only change (sacred art on/off) without
+// discarding any verdict, so no media is classified or probed again.
+function refreshProtectedPresentation() {
+  closeLightbox();
+  document.querySelectorAll('[data-tabcloser-media-state="protected"]').forEach(root => {
+    setRootState(root, 'protected', root.dataset.tabcloserMediaReason);
+  });
+}
+
 function setProtection(config) {
   globalThis.TabCloserXInteractions?.stopReveal();
   const modelEnabled = config?.model?.enabled === true;
   const labeledEnabled = modelEnabled || config?.labeled?.enabled === true || config?.enabled === true;
-  settings = {
+  const nextSettings = {
     replaceText: config?.replaceText === true,
     blockLike: config?.blockLike === true,
+    sacredArt: config?.sacredArt === true,
+    groupMedia: config?.groupMedia === true,
     sensitivity: config?.model?.sensitivity || 'balanced',
   };
-  mode = modelEnabled ? 'full' : labeledEnabled ? 'labeled' : 'off';
+  const nextMode = modelEnabled ? 'full' : labeledEnabled ? 'labeled' : 'off';
+  document.documentElement.toggleAttribute('data-tabcloser-block-like', nextSettings.blockLike && nextMode !== 'off');
+  const key = JSON.stringify([nextMode, nextSettings.sensitivity, nextSettings.replaceText, nextSettings.blockLike, nextSettings.groupMedia]);
+  if (key === protectionKey) {
+    // Presentation (sacred art) and profile settings never invalidate verdicts.
+    const artChanged = settings.sacredArt !== nextSettings.sacredArt;
+    settings = nextSettings;
+    if (artChanged) refreshProtectedPresentation();
+    return;
+  }
+  protectionKey = key;
+  settings = nextSettings;
+  mode = nextMode;
   document.documentElement.dataset.tabcloserXProtection = mode;
   xMetadataDebug('protection-state', {
     diagnosticVersion: 'video-consensus-v2',
@@ -1301,6 +1667,7 @@ function setProtection(config) {
   });
   operationId += 1;
   intersectionObserver.disconnect();
+  observedRoots.clear();
   classificationQueue.length = 0;
   discoveryQueue.clear();
   verifiedSafeMediaKeys.clear();
@@ -1313,6 +1680,8 @@ function setProtection(config) {
   // Settings changes (notably sensitivity) invalidate earlier visual verdicts.
   visuallyProtectedTweetIds.clear();
   videoDecisionsByTweetId.clear();
+  groupTriggersByTweetId.clear();
+  heldRoots.clear();
   clearAllStates();
   if (mode !== 'off') discoverWithin(document);
   globalThis.TabCloserXInteractions?.refresh();
@@ -1340,11 +1709,26 @@ function addSensitiveMetadata(metadata) {
   for (const [tweetId, source] of Object.entries(metadata?.videoSourcesByTweetId || {})) {
     if (rememberDirectVideoSource(tweetId, source)) directVideoTweetIds.add(String(tweetId));
   }
+  for (const [poster, entry] of Object.entries(metadata?.videoSourcesByPoster || {})) {
+    if (!approvedXMediaUrl(entry?.url) || !/^https:\/\//.test(poster)) continue;
+    directVideoSourcesByPoster.delete(poster);
+    directVideoSourcesByPoster.set(poster, entry.url);
+    trimOldestMapEntries(directVideoSourcesByPoster);
+    if (entry.tweetId != null) directVideoTweetIds.add(String(entry.tweetId));
+  }
+  // Wake detail-page waiters once every poster of the batch is known.
+  for (const entry of Object.values(metadata?.videoSourcesByPoster || {})) {
+    if (entry?.tweetId != null) wakeDirectVideoWaiters(String(entry.tweetId), null);
+  }
   for (const url of metadata?.urls || []) {
     const normalized = TabCloserXMetadata.normalizeMediaUrl(url);
     if (normalized) sensitiveUrls.add(normalized);
   }
   for (const tweetId of metadata?.tweetIds || []) sensitiveTweetIds.add(String(tweetId));
+  // Long sessions keep receiving labels; keep the newest few thousand.
+  for (const labels of [sensitiveUrls, sensitiveTweetIds]) {
+    while (labels.size > maxSensitiveLabels) labels.delete(labels.values().next().value);
+  }
   requeueSafeRootsForDirectVideoSources(directVideoTweetIds);
   const scan = mode !== 'off'
     ? scanKnownRootsForMetadata()
@@ -1367,7 +1751,7 @@ function blockPendingOrProtectedActivation(event) {
   // Liking a censored post would endorse content the user never saw.
   if (settings.blockLike) {
     const likeButton = event.target.closest('[data-testid="like"]');
-    if (likeButton && likeButton.closest('article')?.querySelector('[data-tabcloser-media-state="protected"]')) {
+    if (likeButton && ownMediaProtected(likeButton.closest('article'))) {
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
@@ -1381,17 +1765,21 @@ function blockPendingOrProtectedActivation(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
   event.stopPropagation();
-  // A plain click on confirmed-censored media opens the painting large, as if
-  // the artwork were the post's own image.
+  // A plain click on censored media opens the painting large when sacred art
+  // is on, as if the artwork were the post's own image. With the default blur
+  // it explains instead: "Why hidden?" never enlarges the blurred original.
   if (event.type !== 'click' || event.button !== 0) return;
   const stateRoot = root.matches('[data-tabcloser-media-state]')
     ? root
     : root.querySelector('[data-tabcloser-media-state="protected"]');
-  const reason = stateRoot?.dataset.tabcloserMediaReason;
-  if (stateRoot?.dataset.tabcloserMediaState === 'protected' && (reason === 'visual' || reason === 'metadata' || reason === 'manual')) {
+  if (stateRoot?.dataset.tabcloserMediaState !== 'protected') return;
+  const reason = stateRoot.dataset.tabcloserMediaReason;
+  if (settings.sacredArt && (reason === 'visual' || reason === 'metadata' || reason === 'manual' || reason === 'group')) {
     const url = sacredArtUrlFor(stateRoot);
     if (url) openLightbox(url);
+    return;
   }
+  globalThis.TabCloserXInteractions?.openPanel?.(stateRoot);
 }
 
 window.addEventListener('click', blockPendingOrProtectedActivation, true);
@@ -1405,7 +1793,7 @@ document.addEventListener('keydown', event => {
     const active = document.activeElement;
     if (active instanceof Element &&
         !active.matches('input, textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]') &&
-        active.closest('article')?.querySelector('[data-tabcloser-media-state="protected"]')) {
+        ownMediaProtected(active.closest('article'))) {
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();

@@ -25,12 +25,16 @@ test('verdict roots override the fail-closed hiding rule', () => {
   assert.match(stylesheet, /:where\(:not\(\[data-tabcloser-media-state\]\)\) > \*/, 'hiding applies to direct children only');
 });
 
-test('inference runs in a worker with webgl acceleration and a cpu fallback', () => {
+test('inference runs in a worker: webgl first, then a local WebAssembly fallback, then cpu', () => {
   const worker = readFileSync(path.join(root, 'classifier-worker-entry.js'), 'utf8');
+  const build = readFileSync(path.join(root, 'scripts', 'build.mjs'), 'utf8');
   assert.match(classifier, /new Worker\(/);
   assert.doesNotMatch(classifier, /setBackend/);
-  assert.match(worker, /setBackend\('webgl'\)/);
-  assert.match(worker, /setBackend\('cpu'\)/);
+  const order = ["useBackend('webgl')", "useBackend('wasm')", "useBackend('cpu')"].map(step => worker.indexOf(step));
+  assert.ok(order.every(index => index >= 0) && order[0] < order[1] && order[1] < order[2], 'backends must be tried in speed order');
+  assert.match(worker, /if \(!\(await tf\.setBackend\(name\)\)\) throw/, 'a backend that fails to initialize must not be reported as active');
+  assert.match(worker, /setWasmPaths\(new URL\('wasm\/', self\.location\.href\)\.href\)/, 'WebAssembly binaries load from the extension, never remotely');
+  assert.match(build, /tfjs-backend-wasm-simd\.wasm/);
 });
 
 test('graphql response bytes stream through before metadata parsing', () => {
@@ -105,6 +109,22 @@ test('background restores X protection in already-open tabs after an extension r
     'existing-tab restoration must run after protection settings load');
 });
 
+test('blur is the default cover, scales with the cell, and keeps a fixed-radius fallback', () => {
+  const background = readFileSync(path.join(root, 'background.js'), 'utf8');
+  assert.match(background, /sacredArt: raw\.sacredArt === true/, 'sacred art is opt-in');
+  assert.match(coordinator, /tabcloser-media-overlay-blur/);
+  for (const state of ['protected']) {
+    const selector = '[data-tabcloser-media-state="' + state + '"] > :not(.tabcloser-media-overlay) {';
+    const from = stylesheet.indexOf(selector);
+    const rule = from < 0 ? '' : stylesheet.slice(from, stylesheet.indexOf('}', from));
+    const filters = rule.match(/filter:[^;]*/g) || [];
+    assert.equal(filters.length, 2, state + ' needs a fixed fallback followed by the scaled blur');
+    assert.match(filters[0], /blur\(\d+px\)/, state + ' fallback must be a plain radius');
+    assert.match(filters[1], /blur\(max\(\d+px, calc\(var\(--tabcloser-media-side/, state + ' blur must scale with the cell');
+  }
+  assert.match(stylesheet, /\.tabcloser-media-overlay-blur \{[^}]*cursor: pointer/);
+});
+
 test('pending and protected media show blurred previews while staying unplayable and unclickable', () => {
   // Blur targets the root's children (not bare img/video selectors) because X
   // renders photos as background-image divs the img selector misses.
@@ -115,15 +135,15 @@ test('pending and protected media show blurred previews while staying unplayable
   assert.match(coordinator, /tabcloser-media-overlay-pending/);
 });
 
-test('protected media is covered by a deterministic sacred-art painting with a corner notice', () => {
+test('with sacred art on, protected media is covered by a deterministic painting with a corner notice', () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf8'));
   assert.ok(manifest.web_accessible_resources.some(entry => entry.resources.includes('assets/sacred-art/*')),
     'paintings must be web-accessible on X pages');
   assert.ok(manifest.content_scripts[0].js.includes('sacred-art-list.js'), 'the generated art list must load before the coordinator');
-  assert.match(coordinator, /hashString\(sacredArtKeyFor\(root\)\)/, 'artwork choice must use a stable post/media identity');
+  assert.match(coordinator, /const key = sacredArtKeyFor\(root\);[\s\S]{0,900}hashString\(key\)/, 'artwork choice must use a stable post/media identity');
   assert.match(coordinator, /sacredArtByRoot\.get\(root\)/, 'a mounted media root must retain its painting through source churn');
-  assert.match(coordinator, /state === 'protected' && mature \? sacredArtUrlFor\(root\) : null/,
-    'only confirmed mature verdicts may show a painting');
+  assert.match(coordinator, /state === 'protected' && mature && settings\.sacredArt \? sacredArtUrlFor\(root\) : null/,
+    'only confirmed mature verdicts may show a painting, and only when sacred art is on');
   assert.match(coordinator, /willRetry = state === 'protected' && !mature && retryableReason\.test/,
     'failure verdicts awaiting retry must render like the pending state');
   assert.doesNotMatch(stylesheet, /\.tabcloser-media-overlay-art \{[^}]*background-size/,
@@ -156,7 +176,7 @@ test('quote replacement and like blocking are opt-in and reversible', () => {
   assert.match(background, /blockLike: raw\.blockLike === true/);
   assert.match(coordinator, /settings\.replaceText/, 'quote swap must respect its toggle');
   assert.match(coordinator, /settings\.blockLike/, 'like blocking must respect its toggle');
-  assert.match(coordinator, /restoreArticleText\(article\)/, 'released media must restore the original text');
+  assert.match(coordinator, /restoreLayerText\(article, layer\)/, 'released media must restore the original text of its own layer');
   assert.match(coordinator, /closest\('\[data-testid="like"\]'\)/, 'only the like button is blocked, not unlike');
   assert.ok(JSON.stringify(quotes.match(/text:/g).length) > 10, 'quote collection present');
 });

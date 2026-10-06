@@ -4,8 +4,22 @@ The production extension includes these locally bundled dependencies:
 
 - **NSFWJS 4.3.0** and its MobileNetV2Mid model assets — MIT License. Copyright Infinite Red, Inc. Source: <https://github.com/infinitered/nsfwjs>
 - **TensorFlow.js 4.22.0** — Apache License 2.0. Copyright The TensorFlow Authors. Source: <https://github.com/tensorflow/tfjs>
+- **TensorFlow.js WebAssembly backend 4.22.0** (`@tensorflow/tfjs-backend-wasm`, including its prebuilt `.wasm` binaries, which incorporate XNNPACK under the BSD 3-Clause License) — Apache License 2.0. Copyright The TensorFlow Authors. Source: <https://github.com/tensorflow/tfjs/tree/master/tfjs-backend-wasm>
 
-The complete corresponding license texts are available in each dependency's npm package and upstream repository. No dependency is loaded remotely at runtime.
+The full license texts ship with the extension in `licenses/` (`NSFWJS-MIT.txt`, `TensorFlow.js-Apache-2.0.txt`, `XNNPACK-BSD-3-Clause.txt`). TensorFlow.js publishes no NOTICE file. No dependency is loaded remotely at runtime.
+
+Custos itself is released under the MIT License (`LICENSE`).
+
+## Replacement paintings
+
+The paintings in `assets/sacred-art/` cover hidden media when the sacred-art option is on. Each comes from a museum open-access program that dedicates its images to the public domain:
+
+- **The Metropolitan Museum of Art**, Open Access (public domain, CC0). <https://www.metmuseum.org/about-the-met/policies-and-documents/open-access>
+- **The Cleveland Museum of Art**, Open Access (CC0). <https://www.clevelandart.org/open-access>
+- **National Gallery of Art, Washington**, Open Access (CC0). <https://www.nga.gov/artworks/free-images-and-open-access>
+- **The Art Institute of Chicago**, public-domain works (CC0). <https://www.artic.edu/open-access/open-access-images>
+
+`assets/sacred-art/CREDITS.json` lists every painting's title, artist, date, museum, and object page; the painting viewer shows the same credit. The packaged copies are re-encoded at a lower JPEG quality; the images are otherwise unchanged.
 
 ## Adult-domain data
 

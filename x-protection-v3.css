@@ -1,11 +1,34 @@
+/* Custos colors for controls injected into X (Lapis palette). Prefixed so
+   X's own variables never collide. Greys that deliberately match X's
+   interface (quote author, collapsed handle) stay literal below. */
+:root {
+  --tabcloser-surface: #161b26;
+  --tabcloser-surface-raised: #1d2331;
+  --tabcloser-line: #2a3245;
+  --tabcloser-line-soft: #343d53;
+  --tabcloser-frame: #4c6298;
+  --tabcloser-button: #232a3a;
+  --tabcloser-button-hover: #2f3850;
+  --tabcloser-button-border: #46516b;
+  --tabcloser-button-text: #ffffff;
+  --tabcloser-hold-active: #2c3b63;
+  --tabcloser-secondary-border: #3a4458;
+  --tabcloser-secondary-text: #d5dbe8;
+  --tabcloser-text: #eef0f5;
+  --tabcloser-muted: #a5aec1;
+  --tabcloser-accent: #8fb0ff;
+  --tabcloser-focus: #afc6ff;
+  --tabcloser-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%234f73d6' d='M32 4 56 12.5v17C56 44.4 46.6 55 32 60 17.4 55 8 44.4 8 29.5v-17z'/%3E%3Cpath fill='none' stroke='%23f2f4f8' stroke-width='5.5' stroke-linecap='round' d='M17.5 27.5C21.5 34 26.5 37.5 32 37.5S42.5 34 46.5 27.5M22.5 34.4l-2.8 4.6M32 37.8v5.4M41.5 34.4l2.8 4.6'/%3E%3C/svg%3E");
+}
+
 /* Fail-closed hiding applies only in full (classifier) mode: media containers
-   without a TabCloser verdict hide their direct children until verified. In
+   without a Custos verdict hide their direct children until verified. In
    labeled mode media shows unless X's own label protects it; before init (no
    attribute yet) stay hidden. Only direct children are hidden so a nested
    media root (X nests videoPlayer inside videoComponent) can re-anchor its
    own subtree once it has a verdict. X also renders photos as background-image
    divs, which child hiding covers and a plain img selector would miss. */
-:where(html:not([data-tabcloser-x-protection="off"]):not([data-tabcloser-x-protection="labeled"])) :where([data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"]):where(:not([data-tabcloser-media-state])) > * {
+:where(html:not([data-tabcloser-x-protection="off"]):not([data-tabcloser-x-protection="labeled"])) :where([data-testid="tweetPhoto"], [data-testid="videoComponent"], [data-testid="videoPlayer"], [data-testid="card.layoutLarge.media"], [data-testid="card.layoutSmall.media"]):where(:not([data-tabcloser-media-state])) > * {
   /* :where keeps this at zero specificity so any verdict rule below wins. */
   visibility: hidden !important;
 }
@@ -18,7 +41,12 @@
 
 /* Checked-pending and protected media show through unrecognizably blurred
    instead of a flat box; the slight scale keeps sharp edges from leaking
-   past the blur. Protected media blurs harder. */
+   past the blur. Pending media (briefly, while checked) uses a fixed radius.
+   Protected media blurs harder and darker, and its radius grows with the
+   cell's shorter side (--tabcloser-media-side, set by the coordinator) so a
+   full-screen photo is as unreadable as a thumbnail. That rule repeats a
+   fixed-radius filter first: if an engine rejected the scaled value, the
+   fixed blur would still apply instead of no blur at all. */
 [data-tabcloser-media-state="pending"] > :not(.tabcloser-media-overlay) {
   visibility: visible !important;
   filter: blur(32px) saturate(0.8) !important;
@@ -27,7 +55,8 @@
 
 [data-tabcloser-media-state="protected"] > :not(.tabcloser-media-overlay) {
   visibility: visible !important;
-  filter: blur(56px) saturate(0.6) !important;
+  filter: blur(56px) saturate(0.6) brightness(0.55) !important;
+  filter: blur(max(56px, calc(var(--tabcloser-media-side, 0px) * 0.12))) saturate(0.6) brightness(0.55) !important;
   transform: scale(1.2) !important;
 }
 
@@ -109,14 +138,40 @@
   width: 100% !important;
   z-index: 1 !important;
 }
-.tabcloser-media-overlay-art .tabcloser-overlay-label {
-  background: rgba(0, 0, 0, 0.55) !important;
+/* Default cover: the protected original stays blurred and darkened beneath a
+   light wash, and the notice sits in the corner as it does over a painting.
+   Clicking anywhere opens "Why hidden?". */
+.tabcloser-media-overlay-blur {
+  align-items: flex-end !important;
+  background-color: rgba(0, 0, 0, 0.25) !important;
+  border: none !important;
+  cursor: pointer !important;
+  justify-content: flex-start !important;
+  padding: 8px !important;
+}
+.tabcloser-media-overlay-art .tabcloser-overlay-label,
+.tabcloser-media-overlay-blur .tabcloser-overlay-label {
+  align-items: center !important;
+  background: rgba(0, 0, 0, 0.6) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
   border-radius: 999px !important;
-  font-size: 11px !important;
+  display: inline-flex !important;
+  font-size: 12px !important;
   font-weight: 600 !important;
-  padding: 3px 10px !important;
+  gap: 6px !important;
+  line-height: 1 !important;
+  padding: 5px 10px !important;
   position: relative !important;
+  text-shadow: none !important;
   z-index: 2 !important;
+}
+.tabcloser-media-overlay-art .tabcloser-overlay-label::before,
+.tabcloser-media-overlay-blur .tabcloser-overlay-label::before {
+  background: var(--tabcloser-mark) center / contain no-repeat !important;
+  content: "" !important;
+  flex: 0 0 auto !important;
+  height: 12px !important;
+  width: 12px !important;
 }
 
 /* Full-screen viewer for the replacement painting. */
@@ -130,15 +185,46 @@
   position: fixed !important;
   z-index: 2147483647 !important;
 }
+.tabcloser-lightbox-close {
+  background: rgba(0, 0, 0, 0.6) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border-radius: 8px !important;
+  color: #fff !important;
+  cursor: pointer !important;
+  font: 600 14px/1 system-ui, sans-serif !important;
+  padding: 9px 14px !important;
+  position: absolute !important;
+  right: 20px !important;
+  top: 20px !important;
+}
+.tabcloser-lightbox-close:focus-visible { outline: 2px solid var(--tabcloser-focus) !important; outline-offset: 2px !important; }
+.tabcloser-lightbox-figure {
+  align-items: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  margin: 0 !important;
+}
+.tabcloser-lightbox-caption {
+  color: #e7e9ea !important;
+  font: 13px/1.5 system-ui, sans-serif !important;
+  max-width: 80vw !important;
+  text-align: center !important;
+}
+.tabcloser-lightbox-caption a { color: var(--tabcloser-accent) !important; text-decoration: underline !important; }
 .tabcloser-lightbox img {
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.8) !important;
-  max-height: 92vh !important;
+  max-height: 84vh !important;
   max-width: 92vw !important;
 }
 
 /* Censored-post text replacement. */
 .tabcloser-hidden-text {
   display: none !important;
+}
+/* Fallback font stack: the inline font copied from X's own text wins. */
+.tabcloser-quote, .tabcloser-alias {
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 .tabcloser-quote {
   color: inherit !important;
@@ -155,46 +241,114 @@
 
 /* These controls remain independent from the artwork and X's navigation. */
 .tabcloser-controls {
-  color: #ece8df !important;
+  color: var(--tabcloser-text) !important;
   font: 13px/1.5 system-ui, sans-serif !important;
   text-shadow: none !important;
   pointer-events: auto !important;
 }
 .tabcloser-controls button {
   appearance: none !important;
-  background: #292a2e !important;
-  border: 1px solid #6c6556 !important;
+  background: var(--tabcloser-button) !important;
+  border: 1px solid var(--tabcloser-button-border) !important;
   border-radius: 7px !important;
-  color: #fff !important;
+  color: var(--tabcloser-button-text) !important;
   cursor: pointer !important;
   font: 600 12px/1.4 system-ui, sans-serif !important;
   padding: 7px 11px !important;
   margin: 3px !important;
   touch-action: none !important;
 }
-.tabcloser-controls button:hover:not(:disabled) { background: #414039 !important; }
-.tabcloser-controls button:focus-visible { outline: 2px solid #e9c77c !important; outline-offset: 2px !important; }
+.tabcloser-controls button:hover:not(:disabled) { background: var(--tabcloser-button-hover) !important; }
+.tabcloser-controls button:focus-visible { outline: 2px solid var(--tabcloser-focus) !important; outline-offset: 2px !important; }
 .tabcloser-controls button:disabled { opacity: .5 !important; cursor: default !important; }
 .tabcloser-media-actions { position: absolute !important; top: 8px !important; right: 8px !important; z-index: 3 !important; }
+/* "Why hidden?": the reason first, then the friction-heavy reveal. */
 .tabcloser-control-panel {
   position: fixed !important;
   bottom: 24px !important;
   right: 24px !important;
   width: 340px !important;
-  max-width: calc(100vw - 64px) !important;
+  max-width: calc(100vw - 48px) !important;
   max-height: 75vh !important;
   overflow: auto !important;
-  padding: 18px !important;
-  border: 1px solid #8c7950 !important;
+  padding: 0 !important;
+  border: 1px solid var(--tabcloser-frame) !important;
   border-radius: 12px !important;
-  background: #17191d !important;
+  background: var(--tabcloser-surface) !important;
   box-shadow: 0 12px 40px #0009 !important;
   z-index: 2147483647 !important;
 }
-.tabcloser-control-panel > strong { font-size: 16px !important; margin-right: 18px !important; }
-.tabcloser-control-panel p { margin: 12px 0 !important; }
-.tabcloser-control-note { color: #b3b6be !important; }
-.tabcloser-manual-text-notice { padding: 8px 10px !important; border-radius: 8px !important; background: #202328 !important; }
+.tabcloser-panel-head {
+  align-items: center !important;
+  border-bottom: 1px solid var(--tabcloser-line) !important;
+  display: flex !important;
+  gap: 8px !important;
+  padding: 10px 12px 10px 14px !important;
+}
+.tabcloser-panel-head::before {
+  background: var(--tabcloser-mark) center / contain no-repeat !important;
+  content: "" !important;
+  height: 16px !important;
+  width: 16px !important;
+}
+.tabcloser-panel-head strong { flex: 1 !important; font-size: 14.5px !important; }
+.tabcloser-panel-head button { margin: 0 !important; padding: 4px 9px !important; }
+.tabcloser-panel-section { padding: 12px 14px !important; }
+.tabcloser-panel-section + .tabcloser-panel-section { border-top: 1px solid var(--tabcloser-line) !important; }
+.tabcloser-control-panel p { margin: 0 0 6px !important; }
+.tabcloser-control-panel h4 { font: 600 13px/1.4 system-ui, sans-serif !important; margin: 0 0 4px !important; color: var(--tabcloser-text) !important; }
+.tabcloser-kind {
+  color: var(--tabcloser-accent) !important;
+  font-size: 11.5px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.3px !important;
+  margin-bottom: 4px !important;
+  text-transform: uppercase !important;
+}
+.tabcloser-control-note { color: var(--tabcloser-muted) !important; font-size: 12.5px !important; }
+.tabcloser-meter { background: var(--tabcloser-line) !important; border-radius: 3px !important; height: 5px !important; margin: 8px 0 6px !important; overflow: hidden !important; }
+.tabcloser-meter > div { background: var(--tabcloser-accent) !important; height: 100% !important; }
+.tabcloser-allowance { color: var(--tabcloser-muted) !important; font-size: 12.5px !important; font-variant-numeric: tabular-nums !important; }
+.tabcloser-controls .tabcloser-hold { display: block !important; font-size: 13.5px !important; margin: 10px 0 0 !important; padding: 10px 12px !important; width: 100% !important; }
+.tabcloser-controls .tabcloser-hold:active:not(:disabled) { background: var(--tabcloser-hold-active) !important; }
+.tabcloser-controls .tabcloser-secondary { background: transparent !important; border-color: var(--tabcloser-secondary-border) !important; color: var(--tabcloser-secondary-text) !important; margin: 8px 0 0 !important; }
+.tabcloser-manual-text-notice { padding: 8px 10px !important; border-radius: 8px !important; background: var(--tabcloser-surface-raised) !important; border: 1px solid var(--tabcloser-line-soft) !important; }
+
+/* Like stays visibly unavailable on posts whose media is hidden. */
+html[data-tabcloser-block-like] article[data-tabcloser-like-blocked] [data-testid="like"] {
+  cursor: not-allowed !important;
+  opacity: 0.45 !important;
+}
+
+/* Profile protection. Picture and banner blur rules are generated per account
+   by x-profile-protection.js; larger pictures get a stronger radius. */
+a[href$="/photo"] { --tabcloser-avatar-blur: 16px; }
+[aria-modal="true"] { --tabcloser-avatar-blur: 40px; }
+.tabcloser-name-hidden, .tabcloser-handle-hidden, .tabcloser-bio-hidden { display: none !important; }
+.tabcloser-bio-notice { color: var(--tabcloser-muted) !important; font-size: 14px !important; font-style: italic !important; margin: 8px 0 !important; }
+.tabcloser-alias { white-space: nowrap !important; }
+article[data-tabcloser-collapsed]:not([data-tabcloser-collapse-revealed]) > :not(.tabcloser-collapsed-reply),
+article[data-tabcloser-collapse-revealed] > .tabcloser-collapsed-reply {
+  display: none !important;
+}
+.tabcloser-collapsed-reply {
+  align-items: center !important;
+  color: #b7bcc3 !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  font-size: 14px !important;
+  gap: 10px !important;
+  justify-content: space-between !important;
+  padding: 10px 16px !important;
+}
+.tabcloser-collapsed-text { align-items: center !important; display: inline-flex !important; flex-wrap: wrap !important; gap: 6px !important; }
+.tabcloser-collapsed-text::before {
+  background: var(--tabcloser-mark) center / contain no-repeat !important;
+  content: "" !important;
+  height: 13px !important;
+  width: 13px !important;
+}
+.tabcloser-collapsed-handle { color: #71767b !important; }
 
 /* Verdicts remain protected. CSS clips the reveal at its deadline even if a
    busy page delays the JS cleanup; returning to the tab never resumes it. */
@@ -204,10 +358,24 @@
 }
 [data-tabcloser-overlay-revealed], [data-tabcloser-quote-revealed] { visibility: hidden !important; pointer-events: none !important; }
 .tabcloser-hidden-text[data-tabcloser-text-revealed] { display: block !important; }
-[data-tabcloser-revealed], [data-tabcloser-text-revealed] {
+[data-tabcloser-revealed], [data-tabcloser-text-revealed], [data-tabcloser-collapse-revealed] {
   animation: tabcloser-peek-window var(--tabcloser-peek-ms) step-end forwards !important;
 }
 @keyframes tabcloser-peek-window {
   from { clip-path: inset(0); }
   to { clip-path: inset(50%); }
+}
+
+/* Small cells, such as quote-card thumbnails, cannot fit the full notice and
+   button: the notice keeps only its mark and "Why hidden?" becomes "?". The
+   overlay's own size decides, and both keep their accessible text. Kept last
+   and one class more specific so it wins over the regular notice and button. */
+.tabcloser-media-overlay:not(.tabcloser-media-overlay-pending) {
+  container: tabcloser-cell / size;
+}
+@container tabcloser-cell (max-width: 200px) {
+  .tabcloser-media-overlay .tabcloser-overlay-label { font-size: 0 !important; gap: 0 !important; padding: 5px !important; }
+  .tabcloser-media-overlay .tabcloser-media-actions { top: 4px !important; right: 4px !important; }
+  .tabcloser-media-overlay .tabcloser-media-actions button { font-size: 0 !important; line-height: 1 !important; margin: 0 !important; padding: 5px 8px !important; }
+  .tabcloser-media-overlay .tabcloser-media-actions button::before { content: "?" !important; font: 700 12px/1 system-ui, sans-serif !important; }
 }

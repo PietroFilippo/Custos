@@ -26,6 +26,7 @@ async function startCoordinator(html, {
   prepare,
   interactions = false,
   controlMessage,
+  sacredArt = false,
   url = 'https://x.com/search?q=test&src=typed_query&f=media',
 } = {}) {
   const dom = new JSDOM(html, {
@@ -95,9 +96,12 @@ async function startCoordinator(html, {
     storage: {
       local: {
         get: async () => ({
-          xProtection: config || {
-            labeled: { enabled: true },
-            model: { enabled: true, sensitivity: 'balanced' },
+          xProtection: {
+            ...(config || {
+              labeled: { enabled: true },
+              model: { enabled: true, sensitivity: 'balanced' },
+            }),
+            ...(sacredArt ? { sacredArt: true } : {}),
           },
         }),
       },
@@ -140,7 +144,7 @@ test('a native X mature-content warning tile is replaced and cannot open the pos
         <div><span>Warning: Nudity</span></div>
       </a>
     </main>
-  `, {
+  `, { sacredArt: true,
     config: {
       labeled: { enabled: true },
       model: { enabled: false, sensitivity: 'balanced' },
@@ -615,7 +619,7 @@ test('replacement artwork never becomes a media root or classifier input', async
         '<img src="https://pbs.twimg.com/media/protected.jpg">' +
       '</div>' +
     '</a></main>',
-    { classify: () => ({ verdict: 'protect', reason: 'visual' }) },
+    { sacredArt: true, classify: () => ({ verdict: 'protect', reason: 'visual' }) },
   );
 
   try {
@@ -700,6 +704,7 @@ test('replacement artwork stays stable while X changes the media source', async 
       '</div>' +
     '</a></article>',
     {
+      sacredArt: true,
       prepare(window) {
         window.TabCloserSacredArt = Array.from({ length: 97 }, (_, index) => 'painting-' + index + '.jpg');
       },
@@ -978,6 +983,7 @@ test('a direct-video mature verdict persists for remounted media without a secon
     '</a></article>',
     {
       url: 'https://x.com/example/status/' + tweetId,
+      sacredArt: true,
       prepare(window) {
         const createElement = window.document.createElement.bind(window.document);
         window.document.createElement = function createElementWithVideoProbe(tagName, options) {
@@ -1592,6 +1598,7 @@ test('the painting is picked to match the censored cell shape', async () => {
         '</div>' +
       '</a></article>',
       {
+        sacredArt: true,
         prepare(window) {
           window.TabCloserSacredArt = [
             { file: 'wide-painting.jpg', aspect: 2.4 },
@@ -1634,7 +1641,7 @@ test('the painting renders as one blurred backdrop plus one contained copy, neve
         '<img src="https://pbs.twimg.com/media/dup-fixture.jpg">' +
       '</div>' +
     '</a></article>',
-    { classify: () => ({ verdict: 'protect', reason: 'visual' }) },
+    { sacredArt: true, classify: () => ({ verdict: 'protect', reason: 'visual' }) },
   );
 
   try {
@@ -1665,6 +1672,7 @@ test('a painting is applied only after it decodes, never while partially loaded'
       '</div>' +
     '</a></article>',
     {
+      sacredArt: true,
       prepare(window) {
         window.__pendingArtImages = [];
         window.__artImageLoader = image => window.__pendingArtImages.push(image);
@@ -1782,5 +1790,424 @@ test('manual text is independent of media and remains hidden across protection c
     await h.sendContentMessage({type:'xControlsChanged',snapshot:{posts:[],texts:[],media:[]}});
     assert.equal(text.classList.contains('tabcloser-hidden-text'),false);
     assert.equal(h.window.document.querySelector('.tabcloser-manual-text-notice'),null);
+  } finally { h.dom.window.close(); }
+});
+
+test('blur is the default cover: no painting, and a click on the media explains instead of enlarging', async () => {
+  const h = await startCoordinator(controlFixture, { interactions: true,
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.83 }) });
+  try {
+    const root = h.window.document.querySelector('#controlled-image');
+    const overlay = root.closest('a').querySelector('.tabcloser-media-overlay');
+    assert.equal(root.dataset.tabcloserMediaState, 'protected');
+    assert.ok(overlay.classList.contains('tabcloser-media-overlay-blur'));
+    assert.equal(overlay.querySelector('.tabcloser-overlay-artwork'), null, 'blur mode never paints artwork');
+    assert.match(overlay.textContent, /Sensitive media hidden/);
+    const click = new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    overlay.dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, 'X must not open its photo modal');
+    assert.equal(h.window.document.querySelector('.tabcloser-lightbox'), null);
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /image.*0\.830/);
+  } finally { h.dom.window.close(); }
+});
+
+test('switching sacred art redraws covers in place without classifying again', async () => {
+  const config = { labeled: { enabled: true }, model: { enabled: true, sensitivity: 'balanced' } };
+  const h = await startCoordinator(controlFixture, { config, interactions: true,
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.83 }) });
+  try {
+    const root = h.window.document.querySelector('#controlled-image');
+    const host = root.closest('a');
+    const checks = h.classificationMessages.length;
+    await h.sendContentMessage({ type: 'xProtectionChanged', xProtection: { ...config, sacredArt: true } });
+    assert.ok(host.querySelector('.tabcloser-media-overlay-art .tabcloser-overlay-artwork'));
+    assert.equal(root.dataset.tabcloserMediaState, 'protected');
+    assert.ok(host.querySelector('.tabcloser-media-actions button'), '"Why hidden?" survives the redraw');
+    await h.sendContentMessage({ type: 'xProtectionChanged', xProtection: { ...config, sacredArt: false } });
+    assert.ok(host.querySelector('.tabcloser-media-overlay-blur'));
+    assert.equal(host.querySelector('.tabcloser-overlay-artwork'), null);
+    assert.equal(h.classificationMessages.length, checks, 'a presentation change keeps every verdict');
+  } finally { h.dom.window.close(); }
+});
+
+test('link-preview images are classified and covered as their own cells, never the whole card', async () => {
+  const h = await startCoordinator(`
+    <article><a href="/example/status/555"><time>1h</time></a>
+      <div data-testid="card.wrapper"><a href="https://t.co/abc">
+        <div id="card-media" data-testid="card.layoutLarge.media"><img src="https://pbs.twimg.com/card_img/1/preview.jpg"></div>
+        <div id="card-text">example.com · Article title</div>
+      </a></div>
+    </article>`, {
+    url: 'https://x.com/home',
+    classify: message => message.mediaKey.includes('card_img') ? { verdict: 'protect', reason: 'visual', adultScore: 0.9 } : { verdict: 'safe', reason: 'visual' },
+  });
+  try {
+    const media = h.window.document.getElementById('card-media');
+    assert.equal(media.dataset.tabcloserMediaState, 'protected');
+    assert.ok(h.classificationMessages.some(message => message.url?.includes('/card_img/')));
+    assert.equal(h.window.document.getElementById('card-text').closest('[data-tabcloser-media-state]'), null, 'card text stays readable');
+    const click = new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    media.dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, 'a covered preview cannot open its link');
+  } finally { h.dom.window.close(); }
+});
+
+const quotedGifFixture = (outerMedia = '') => `
+  <article id="outer"><a href="/outer/status/700"><time>1h</time></a>
+    <div data-testid="tweetText">Outer text</div>${outerMedia}
+    <div role="link" id="quote-card">
+      <a href="/quoted/status/701"><time>Oct 1</time></a>
+      <div data-testid="tweetText">Quoted text</div>
+      <div id="gif-thumb" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/tweet_video_thumb/GABC.jpg"></div>
+    </div>
+    <button id="like" data-testid="like">Like</button>
+  </article>`;
+
+function quotedGifHarness(html, classify) {
+  return startCoordinator(html, {
+    url: 'https://x.com/home',
+    config: { labeled: { enabled: true }, model: { enabled: true, sensitivity: 'balanced' }, blockLike: true, replaceText: true },
+    prepare(window) {
+      window.TabCloserQuotes = [{ text: 'Test quote', author: 'Test Author' }];
+      const createElement = window.document.createElement.bind(window.document);
+      window.document.createElement = function createElementWithVideoProbe(tagName, options) {
+        const element = createElement(tagName, options);
+        if (String(tagName).toLowerCase() === 'video') configureFixtureVideo(window, element, 'https://video.twimg.com/tweet_video/GABC.mp4');
+        return element;
+      };
+    },
+    classify,
+  });
+}
+
+test('a quoted GIF thumbnail is a video thumbnail: its frames can release a false positive', async () => {
+  const h = await quotedGifHarness(quotedGifFixture(), message => message.kind === 'url'
+    ? { verdict: 'protect', reason: 'visual', adultScore: 0.83 }
+    : { verdict: 'safe', reason: 'visual', adultScore: 0.01 });
+  try {
+    const thumb = h.window.document.getElementById('gif-thumb');
+    assert.equal(thumb.dataset.tabcloserMediaState, 'protected', 'without a video source the thumbnail stays covered');
+    assert.equal(h.window.TabCloserXCoordinator.decisionFor(thumb).source, 'video thumbnail');
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: [], videoSourcesByTweetId: { 701: 'https://video.twimg.com/tweet_video/GABC.mp4' } } });
+    await flush(h.window, 24);
+    assert.equal(thumb.dataset.tabcloserMediaState, 'safe', 'safe GIF frames overrule the thumbnail, as in the detail view');
+    assert.ok(h.classificationMessages.some(message => message.kind === 'frame'));
+    assert.equal(h.window.document.querySelector('#quote-card [data-testid="tweetText"]').classList.contains('tabcloser-hidden-text'), false);
+  } finally { h.dom.window.close(); }
+});
+
+test('a censored quoted card never blocks liking the post that quotes it; the post\'s own media does', async () => {
+  const h = await quotedGifHarness(quotedGifFixture(), () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }));
+  try {
+    const outer = h.window.document.getElementById('outer');
+    assert.equal(h.window.document.getElementById('gif-thumb').dataset.tabcloserMediaState, 'protected');
+    assert.equal(outer.hasAttribute('data-tabcloser-like-blocked'), false);
+    const click = new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    h.window.document.getElementById('like').dispatchEvent(click);
+    assert.equal(click.defaultPrevented, false, 'liking the quoting post stays possible');
+  } finally { h.dom.window.close(); }
+  const own = await quotedGifHarness(quotedGifFixture('<a href="/outer/status/700/photo/1"><div id="own" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/own.jpg"></div></a>'),
+    () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }));
+  try {
+    assert.ok(own.window.document.getElementById('outer').hasAttribute('data-tabcloser-like-blocked'));
+    const click = new own.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    own.window.document.getElementById('like').dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, 'the post\'s own hidden media still blocks likes');
+  } finally { own.dom.window.close(); }
+});
+
+test('closing "Why hidden?" returns focus to its button without scrolling back to the post', async () => {
+  const focusCalls = [];
+  const h = await startCoordinator(controlFixture, { interactions: true,
+    prepare(window) {
+      const focus = window.HTMLElement.prototype.focus;
+      window.HTMLElement.prototype.focus = function recordFocus(options) { focusCalls.push({ element: this, options }); return focus.call(this, options); };
+    },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.83 }) });
+  try {
+    const whyHidden = h.window.document.querySelector('.tabcloser-media-actions button');
+    whyHidden.click();
+    const close = [...h.window.document.querySelectorAll('.tabcloser-control-panel button')].find(button => button.textContent === 'Close');
+    focusCalls.length = 0;
+    close.click();
+    assert.equal(h.window.document.querySelector('.tabcloser-control-panel'), null);
+    const restore = focusCalls.find(call => call.element === whyHidden);
+    assert.ok(restore, 'focus returns to the opener for keyboard users');
+    assert.equal(restore.options?.preventScroll, true, 'the page must not jump back to the post');
+  } finally { h.dom.window.close(); }
+});
+
+test('a video is probed with the source matched to its own poster, not its post', async () => {
+  const tweetId = '777001';
+  const posterSource = 'https://video.twimg.com/amplify_video/2/vid/b.mp4';
+  const h = await directVideoHarness(tweetId, posterSource, message => message.kind === 'url'
+    ? { verdict: 'protect', reason: 'visual', adultScore: 0.83 }
+    : { verdict: 'safe', reason: 'visual', adultScore: 0.01 });
+  try {
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: [], videoSourcesByTweetId: {},
+      videoSourcesByPoster: { 'https://pbs.twimg.com/amplify_video_thumb/305555/img/poster.jpg': { url: posterSource, tweetId } } } });
+    await flush(h.window, 24);
+    const root = h.window.document.getElementById('scored-video-root');
+    assert.equal(root.dataset.tabcloserMediaState, 'safe', 'safe frames of its own video release it');
+    assert.ok(h.classificationMessages.some(message => message.kind === 'frame' && message.mediaKey.includes('/2/vid/b.mp4')));
+  } finally { h.dom.window.close(); }
+});
+
+test('labels-only mode protects a media-search tile when its label arrives late', async () => {
+  const h = await startCoordinator('<main><a id="tile" href="/a/status/123"><img src="https://pbs.twimg.com/media/tile.jpg"></a></main>', {
+    config: { labeled: { enabled: true }, model: { enabled: false } },
+  });
+  try {
+    const tile = h.window.document.getElementById('tile');
+    assert.equal(tile.dataset.tabcloserMediaState, undefined, 'unlabeled tiles stay untouched');
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: ['123'] } });
+    assert.equal(tile.dataset.tabcloserMediaState, 'protected');
+  } finally { h.dom.window.close(); }
+});
+
+test('a quote returns when X redraws only the hidden post\'s text', async () => {
+  const h = await startCoordinator(controlFixture, {
+    config: { labeled: { enabled: true }, model: { enabled: true }, replaceText: true },
+    prepare(window) { window.TabCloserQuotes = [{ text: 'Test quote', author: 'Test Author' }]; },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }),
+  });
+  try {
+    const document = h.window.document;
+    const oldText = document.querySelector('[data-testid="tweetText"]');
+    assert.equal(oldText.dataset.tabcloserQuoted, 'yes');
+    const fresh = document.createElement('div');
+    fresh.setAttribute('data-testid', 'tweetText');
+    fresh.textContent = 'Original text';
+    oldText.replaceWith(fresh);
+    await flush(h.window, 12);
+    assert.equal(fresh.dataset.tabcloserQuoted, 'yes', 'the redrawn text is hidden again');
+    assert.equal(document.querySelectorAll('.tabcloser-quote').length, 1, 'no duplicate or orphaned quote');
+  } finally { h.dom.window.close(); }
+});
+
+test('pending media removed before reaching the viewport is unregistered from the observer', async () => {
+  const unobserved = [];
+  const h = await startCoordinator(controlFixture, {
+    prepare(window) {
+      window.IntersectionObserver = class { observe() {} unobserve(target) { unobserved.push(target); } disconnect() {} };
+    },
+  });
+  try {
+    const root = h.window.document.getElementById('controlled-image');
+    assert.equal(root.dataset.tabcloserMediaState, 'pending');
+    root.closest('article').remove();
+    h.window.document.body.appendChild(h.window.document.createElement('div'));
+    await flush(h.window, 6);
+    assert.ok(unobserved.includes(root));
+  } finally { h.dom.window.close(); }
+});
+
+test('the painting viewer is a labelled dialog with a focused Close button', async () => {
+  const h = await startCoordinator(controlFixture, { sacredArt: true, classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }) });
+  try {
+    const root = h.window.document.getElementById('controlled-image');
+    root.closest('a').querySelector('.tabcloser-media-overlay').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    const viewer = h.window.document.querySelector('.tabcloser-lightbox');
+    assert.equal(viewer.getAttribute('role'), 'dialog');
+    assert.ok(viewer.getAttribute('aria-label'));
+    const close = viewer.querySelector('.tabcloser-lightbox-close');
+    assert.equal(h.window.document.activeElement, close);
+    close.click();
+    assert.equal(h.window.document.querySelector('.tabcloser-lightbox'), null);
+  } finally { h.dom.window.close(); }
+});
+
+test('a manual text hide follows a post into a reused element', async () => {
+  const h = await startCoordinator(controlFixture, { interactions: true,
+    config: { labeled: { enabled: false }, model: { enabled: false } },
+    controlMessage: () => ({ ok: true, posts: [], texts: ['999'], media: [], revealDailySec: 0 }) });
+  try {
+    const text = h.window.document.querySelector('[data-testid="tweetText"]');
+    assert.equal(text.classList.contains('tabcloser-hidden-text'), false);
+    for (const link of h.window.document.querySelectorAll('a[href*="/status/123"]')) link.setAttribute('href', link.getAttribute('href').replace('123', '999'));
+    await new Promise(resolve => h.window.setTimeout(resolve, 120));
+    assert.ok(text.classList.contains('tabcloser-hidden-text'), 'X reused the element for the hidden post');
+  } finally { h.dom.window.close(); }
+});
+
+const twoPosts = `
+  <article><a href="/a/status/501"><time>1h</time></a><a href="/a/status/501/photo/1"><div id="first" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/first.jpg"></div></a></article>
+  <article><a href="/b/status/502"><time>1h</time></a><a href="/b/status/502/photo/1"><div id="second" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/second.jpg"></div></a></article>`;
+const credited = [
+  { file: 'met-the-annunciation-1.jpg', aspect: 1, title: 'The Annunciation', artist: 'Botticelli', date: 'ca. 1490', museum: 'The Metropolitan Museum of Art', url: 'https://www.metmuseum.org/art/collection/search/1' },
+  { file: 'cma-the-nativity-2.jpg', aspect: 1, title: 'The Nativity', artist: 'Unknown artist', date: 'c. 1500', museum: 'The Cleveland Museum of Art', url: 'https://clevelandart.org/art/2' },
+];
+
+test('two posts on screen never share a painting, and a remounted post keeps its own', async () => {
+  const h = await startCoordinator(twoPosts, { sacredArt: true,
+    prepare(window) { window.TabCloserSacredArt = credited; },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }) });
+  try {
+    const document = h.window.document;
+    const art = id => document.getElementById(id).closest('a').querySelector('.tabcloser-media-overlay').dataset.tabcloserArt;
+    const first = art('first');
+    assert.ok(first && art('second'));
+    assert.notEqual(first, art('second'), 'visible posts get different paintings');
+    const article = document.getElementById('first').closest('article');
+    const clone = article.cloneNode(true);
+    clone.querySelectorAll('.tabcloser-media-overlay').forEach(node => node.remove());
+    clone.querySelectorAll('[data-tabcloser-media-state]').forEach(node => node.removeAttribute('data-tabcloser-media-state'));
+    article.replaceWith(clone);
+    await flush(h.window, 12);
+    assert.equal(art('first'), first, 'X remounting a post does not change its painting');
+  } finally { h.dom.window.close(); }
+});
+
+test('the painting viewer credits the work and links to its museum', async () => {
+  const h = await startCoordinator(controlFixture, { sacredArt: true,
+    prepare(window) { window.TabCloserSacredArt = [credited[0]]; },
+    classify: () => ({ verdict: 'protect', reason: 'visual', adultScore: 0.9 }) });
+  try {
+    h.window.document.getElementById('controlled-image').closest('a').querySelector('.tabcloser-media-overlay')
+      .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    const caption = h.window.document.querySelector('.tabcloser-lightbox-caption');
+    assert.match(caption.textContent, /The Annunciation — Botticelli, ca\. 1490 · The Metropolitan Museum of Art/);
+    assert.equal(caption.querySelector('a').getAttribute('href'), 'https://www.metmuseum.org/art/collection/search/1');
+    assert.equal(h.window.document.querySelector('.tabcloser-lightbox img').alt, 'The Annunciation, Botticelli');
+  } finally { h.dom.window.close(); }
+});
+
+const borderlineVerdict = { verdict: 'protect', reason: 'visual', adultScore: 0.24,
+  scores: { Drawing: 0.05, Hentai: 0.01, Neutral: 0.5, Porn: 0.04, Sexy: 0.4 } };
+const withCommon = window => window.eval(readFileSync(path.join(root, 'common.js'), 'utf8'));
+
+test('“Not sensitive” marks: two-step request, hidden while pending, released once active, re-covered on removal', async () => {
+  const key = '123|https://pbs.twimg.com/media/fixture.jpg';
+  const messages = [];
+  const controls = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 2, safeMarksLeft: 2 };
+  const h = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
+    controlMessage(message) {
+      messages.push(message);
+      if (message.type !== 'xControlMarkSafe') return controls;
+      const activeAt = Date.now() + 86400000;
+      return { ...controls, activeAt, safeMarksLeft: 1, safeMarks: [{ key, active: false, activeAt }] };
+    },
+  });
+  const image = () => h.window.document.getElementById('controlled-image');
+  const findButton = label => [...h.window.document.querySelectorAll('button')].find(b => b.textContent === label);
+  try {
+    assert.equal(image().dataset.tabcloserMediaState, 'protected');
+    h.window.document.querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    const mark = findButton('Mark not sensitive…');
+    assert.ok(mark, 'Why hidden? offers a mark for a borderline classifier image');
+    mark.click();
+    assert.equal(messages.some(message => message.type === 'xControlMarkSafe'), false, 'the first click only asks');
+    mark.click();
+    await flush(h.window, 3);
+    const sent = messages.find(message => message.type === 'xControlMarkSafe');
+    assert.equal(sent.key, key);
+    assert.equal(sent.url, 'https://pbs.twimg.com/media/fixture.jpg');
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /will show from/);
+    assert.equal(image().dataset.tabcloserMediaState, 'protected', 'a pending mark keeps the image hidden');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [{ key, active: true, activeAt: 1 }] } });
+    await flush(h.window);
+    assert.equal(image().dataset.tabcloserMediaState, 'safe', 'an active mark releases the image');
+    assert.equal(image().dataset.tabcloserMediaReason, 'marked');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [] } });
+    await flush(h.window);
+    assert.equal(image().dataset.tabcloserMediaState, 'protected', 'removing the mark brings the cover back');
+  } finally { h.dom.window.close(); }
+});
+
+test('“Not sensitive” marks are not offered for confident detections, X labels, or when off under a lock', async () => {
+  const panelText = async h => {
+    h.window.document.querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    return h.window.document.querySelector('.tabcloser-control-panel').textContent;
+  };
+  const allowed = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 2, safeMarksLeft: 2 };
+  const confident = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, controlMessage: () => allowed,
+    classify: () => ({ ...borderlineVerdict, adultScore: 0.9, scores: { ...borderlineVerdict.scores, Porn: 0.85, Neutral: 0 } }) });
+  try {
+    const text = await panelText(confident);
+    assert.match(text, /too confident/);
+    assert.equal(text.includes('Mark not sensitive'), false);
+  } finally { confident.dom.window.close(); }
+  const offLocked = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
+    controlMessage: () => ({ ...allowed, safeMarksPerDay: 0, safeMarksLeft: 0, allowanceLocked: true }) });
+  try {
+    assert.equal((await panelText(offLocked)).includes('Not sensitive?'), false, 'no nudge toward a setting that is locked');
+  } finally { offLocked.dom.window.close(); }
+  const labelled = await startCoordinator(controlFixture.replace('<img src=', '<span>Warning: Nudity</span><img src='), {
+    interactions: true, prepare: withCommon, controlMessage: () => allowed, classify: () => borderlineVerdict });
+  try {
+    assert.equal(labelled.window.document.querySelector('[data-tabcloser-media-state="protected"]').dataset.tabcloserMediaReason, 'metadata');
+    assert.equal((await panelText(labelled)).includes('Not sensitive?'), false, 'X labels cannot be marked');
+  } finally { labelled.dom.window.close(); }
+});
+
+const twoPhotoPost = '<article><a href="/example/status/200"><time>1h</time></a><div data-testid="tweetText">Two photos</div>' +
+  '<a href="/example/status/200/photo/1"><div id="photo-a" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/aaa.jpg"></div></a>' +
+  '<a href="/example/status/200/photo/2"><div id="photo-b" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/bbb.jpg"></div></a></article>';
+const groupConfig = { labeled: { enabled: true }, model: { enabled: true, sensitivity: 'balanced' }, groupMedia: true };
+
+test('with "hide all of a post’s media" on, a safe photo waits for its sibling and is hidden with it', async () => {
+  let finishA;
+  const h = await startCoordinator(twoPhotoPost, { config: groupConfig, interactions: true,
+    classify: message => message.url?.includes('aaa') ? new Promise(resolve => { finishA = resolve; }) : { verdict: 'safe', reason: 'visual' } });
+  const state = id => h.window.document.getElementById(id).dataset;
+  try {
+    assert.equal(state('photo-b').tabcloserMediaState, 'pending', 'a safe photo never shows while its sibling is unchecked');
+    finishA(borderlineVerdict);
+    await flush(h.window, 12);
+    assert.equal(state('photo-a').tabcloserMediaReason, 'visual');
+    assert.equal(state('photo-b').tabcloserMediaState, 'protected');
+    assert.equal(state('photo-b').tabcloserMediaReason, 'group');
+    h.window.document.getElementById('photo-b').closest('a').querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /Another image or video in this post was hidden/);
+  } finally { h.dom.window.close(); }
+});
+
+test('with the option off, or when every photo is safe, each photo keeps its own verdict', async () => {
+  const off = await startCoordinator(twoPhotoPost, {
+    classify: message => message.url?.includes('aaa') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  try {
+    await flush(off.window, 12);
+    assert.equal(off.window.document.getElementById('photo-a').dataset.tabcloserMediaState, 'protected');
+    assert.equal(off.window.document.getElementById('photo-b').dataset.tabcloserMediaState, 'safe');
+  } finally { off.dom.window.close(); }
+  const safe = await startCoordinator(twoPhotoPost, { config: groupConfig });
+  try {
+    await flush(safe.window, 12);
+    assert.equal(safe.window.document.getElementById('photo-a').dataset.tabcloserMediaState, 'safe');
+    assert.equal(safe.window.document.getElementById('photo-b').dataset.tabcloserMediaState, 'safe');
+  } finally { safe.dom.window.close(); }
+});
+
+test('a hidden quoted photo does not hide the media of the post that quotes it', async () => {
+  const html = '<article><a href="/outer/status/300"><time>1h</time></a><div data-testid="tweetText">Look</div>' +
+    '<a href="/outer/status/300/photo/1"><div id="outer-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/outer.jpg"></div></a>' +
+    '<div role="link"><a href="/inner/status/301"><time>2h</time></a>' +
+    '<a href="/inner/status/301/photo/1"><div id="inner-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/inner.jpg"></div></a></div></article>';
+  const h = await startCoordinator(html, { config: groupConfig,
+    classify: message => message.url?.includes('inner') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  try {
+    await flush(h.window, 12);
+    assert.equal(h.window.document.getElementById('inner-photo').dataset.tabcloserMediaState, 'protected');
+    assert.equal(h.window.document.getElementById('outer-photo').dataset.tabcloserMediaState, 'safe');
+  } finally { h.dom.window.close(); }
+});
+
+test('when the photo that hid its post is marked not sensitive, the others are checked again on their own', async () => {
+  const controls = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 1, safeMarksLeft: 1 };
+  const h = await startCoordinator(twoPhotoPost, { config: groupConfig, interactions: true, prepare: withCommon, controlMessage: () => controls,
+    classify: message => message.url?.includes('aaa') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  const state = id => h.window.document.getElementById(id).dataset;
+  try {
+    await flush(h.window, 12);
+    assert.equal(state('photo-b').tabcloserMediaReason, 'group');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls,
+      safeMarks: [{ key: '200|https://pbs.twimg.com/media/aaa.jpg', active: true, activeAt: 1 }] } });
+    await flush(h.window, 12);
+    assert.equal(state('photo-a').tabcloserMediaState, 'safe');
+    assert.equal(state('photo-a').tabcloserMediaReason, 'marked');
+    assert.equal(state('photo-b').tabcloserMediaState, 'safe', 'the sibling is released after its own check');
   } finally { h.dom.window.close(); }
 });

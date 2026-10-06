@@ -11,3 +11,4 @@ classifier-runtime.js
 classifier-worker.js
 sacred-art-list.js
 models/
+wasm/

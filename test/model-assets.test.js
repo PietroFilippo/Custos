@@ -22,6 +22,26 @@ test('sacred-art assets and the generated list exist in the loadable extension r
   }
 });
 
+test('the WebAssembly classifier fallback ships in the loadable extension root', () => {
+  for (const file of ['tfjs-backend-wasm.wasm', 'tfjs-backend-wasm-simd.wasm']) {
+    const wasmPath = path.join(__dirname, '..', 'wasm', file);
+    assert.ok(fs.existsSync(wasmPath), 'wasm/' + file + ' is missing — run `npm run build`');
+    assert.ok(fs.statSync(wasmPath).size > 0, 'empty WebAssembly binary: ' + file);
+  }
+});
+
+test('every painting is credited to a public-domain museum source', () => {
+  const artDir = path.join(__dirname, '..', 'assets', 'sacred-art');
+  const paintings = fs.readdirSync(artDir).filter(file => /\.(?:jpe?g|png|webp)$/i.test(file)).sort();
+  const credits = JSON.parse(fs.readFileSync(path.join(artDir, 'CREDITS.json'), 'utf8'));
+  assert.deepEqual(credits.map(entry => entry.file).sort(), paintings, 'CREDITS.json must list exactly the painting files');
+  for (const entry of credits) {
+    assert.ok(entry.title && entry.artist && entry.museum, 'incomplete credit: ' + entry.file);
+    assert.match(entry.url, /^https:\/\/(?:www\.metmuseum\.org|clevelandart\.org|www\.artic\.edu|www\.nga\.gov)\//, 'credit needs a museum object page: ' + entry.file);
+    assert.match(entry.file, /^(met|cma|aic|nga)-[a-z0-9-]+-\d+\.jpg$/, 'file names describe the painting: ' + entry.file);
+  }
+});
+
 test('classifier model assets exist in the loadable extension root', () => {
   const modelJsonPath = path.join(modelDir, 'model.json');
   assert.ok(fs.existsSync(modelJsonPath), 'models/mobilenet_v2_mid/model.json is missing — run `npm run build`');

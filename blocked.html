@@ -3,21 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Site blocked · TabCloser</title>
-  <link rel="icon" href="icons/tabcloser.svg" type="image/svg+xml">
+  <title>Site blocked · Custos</title>
+  <link rel="icon" href="icons/custos.svg" type="image/svg+xml">
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="blocked.css">
 </head>
 <body>
   <main>
-    <header class="brand"><img src="icons/tabcloser.svg" alt="" width="40" height="40"><span class="brand-name">TabCloser</span></header>
-    <div class="block-card">
-      <div class="badge">Site timer</div>
-      <h1>This site is blocked</h1>
+    <header class="brand"><img src="icons/custos.svg" alt="" width="32" height="32"><span class="brand-name">Custos</span></header>
+    <div id="card" class="block-card">
+      <div id="badge" class="badge">Site timer</div>
+      <h1 id="title">This site is blocked for now</h1>
       <p class="domain" id="domain"></p>
-      <p class="countdown">Available in <span id="time">--:--</span></p>
-      <p class="note">Your browsing limit is taking a break for you. You can review the timer and its lock in settings.</p>
-      <button id="settings" class="primary-action" type="button">Open settings</button>
+      <div id="countdown" class="countdown">
+        <span class="label">Available in</span>
+        <span id="time" class="time">--:--</span>
+        <div id="progressBar" class="bar" aria-hidden="true" hidden><div id="progress" class="bar-fill"></div></div>
+      </div>
+      <p id="statement" class="statement" hidden></p>
+      <p id="why" class="why"></p>
+      <p id="lockNote" class="lock-note lock-icon" hidden></p>
+      <div class="actions">
+        <button id="settings" class="primary-action" type="button">Open settings</button>
+        <button id="closeTab" class="btn btn-quiet" type="button">Close this tab</button>
+      </div>
     </div>
   </main>
   <script src="common.js"></script>
