@@ -14,7 +14,7 @@ const state = {
     sacredArt: false,   // presentation only: cover hidden media with a painting instead of the blur
     groupMedia: false,  // hide all of a post's media when one item is hidden
     revealDailySec: 0,  // opt-in; shared across all X tabs
-    revealPerPostSec: 3, // daily reveal time per post, 3-10 s
+    revealPerPostSec: 3, // daily reveal time per post, 3-5 s
     revealLockUntil: null,
     safeMarksPerDay: 0, // "Not sensitive" marks allowed per day (0-5); 0 turns them off
     profile: null,      // see normalizeXProfile
@@ -81,7 +81,7 @@ async function loadState() {
     blockLike: raw.blockLike === true,
     sacredArt: raw.sacredArt === true,
     groupMedia: raw.groupMedia === true,
-    revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(3600, raw.revealDailySec)) : 0,
+    revealDailySec: Number.isInteger(raw.revealDailySec) ? Math.max(0, Math.min(TabCloserXUserControls.MAX_DAILY_SEC, raw.revealDailySec)) : 0,
     revealLockUntil: finiteOrNull(raw.revealLockUntil),
     revealPerPostSec: TabCloserXUserControls.postLimitSec(raw.revealPerPostSec),
     safeMarksPerDay: TabCloserXUserControls.safeMarksPerDay(raw.safeMarksPerDay),
@@ -865,6 +865,8 @@ function xControlSnapshot(postId) {
     safeMarksPerDay: state.xProtection.safeMarksPerDay,
     safeMarksLeft: TabCloserXUserControls.marksLeft(xUserControls, state.xProtection.safeMarksPerDay, now),
     allowanceLocked: xAllowanceLocked(),
+    allowanceLockUntil: Math.max(0, ...[state.xProtection.labeled.lockUntil, state.xProtection.model.lockUntil, state.xProtection.revealLockUntil]
+      .filter(isLockActive)) || null,
   };
 }
 
@@ -880,25 +882,123 @@ async function scheduleSafeMarkAlarm() {
   browser.alarms.create('xSafeMarks', { when: Date.now() + Math.max(0, next - trustedNow()) + 1000 });
 }
 
-// A mark is accepted only for an image the classifier hides with a
-// borderline score. The background scores the image itself, so the page
-// cannot claim a low score.
+// For a mark on a video or GIF the background samples the video file
+// itself: six frames across the whole video, plus a center crop of each wide
+// or tall frame. Pixels never come from the page.
+const MARK_VIDEO_FRACTIONS = [0.15, 0.3, 0.5, 0.65, 0.85, 0.95];
+
+function waitForMediaEvent(target, name, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => done(new Error(name + ' timeout')), timeoutMs);
+    const onEvent = () => done(null);
+    const onError = () => done(new Error('video could not be loaded'));
+    function done(error) {
+      clearTimeout(timer);
+      target.removeEventListener(name, onEvent);
+      target.removeEventListener('error', onError);
+      if (error) reject(error); else resolve();
+    }
+    target.addEventListener(name, onEvent);
+    target.addEventListener('error', onError);
+  });
+}
+
+function videoFramePixels(video, crop) {
+  const width = video.videoWidth || 0;
+  const height = video.videoHeight || 0;
+  const side = Math.min(width, height);
+  if (crop && (!side || Math.max(width, height) / side < 1.3)) return null;
+  const size = TabCloserXVerdict.MODEL_INPUT_SIZE;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('canvas is unavailable');
+  if (crop) context.drawImage(video, (width - side) / 2, (height - side) / 2, side, side, 0, 0, size, size);
+  else context.drawImage(video, 0, 0, size, size);
+  return context.getImageData(0, 0, size, size);
+}
+
+async function sampleVideoForMark(source) {
+  const video = document.createElement('video');
+  video.crossOrigin = 'anonymous';
+  video.muted = true;
+  video.preload = 'auto';
+  const loaded = waitForMediaEvent(video, 'loadeddata', 10000);
+  video.src = source;
+  // Attached like the page's own probe; it is never shown or played.
+  document.documentElement?.appendChild(video);
+  try {
+    await loaded;
+    const duration = video.duration;
+    if (!Number.isFinite(duration) || duration <= 0) throw new Error('video duration unavailable');
+    const latest = Math.max(0, duration - 0.1);
+    const times = [...new Set(MARK_VIDEO_FRACTIONS.map(fraction => Math.round(Math.min(latest, duration * fraction) * 1000) / 1000))];
+    const results = [];
+    for (const time of times) {
+      if (Math.abs(video.currentTime - time) > 0.01) {
+        const seeked = waitForMediaEvent(video, 'seeked', 5000);
+        video.currentTime = time;
+        await seeked;
+      }
+      for (const crop of [false, true]) {
+        const pixels = videoFramePixels(video, crop);
+        if (pixels) results.push(await enqueueXClassification(() => TabCloserClassifier.classifyImageData(pixels, state.xProtection.model.sensitivity)));
+      }
+    }
+    return results;
+  } finally {
+    video.removeAttribute('src');
+    video.load?.();
+    video.remove?.();
+  }
+}
+
+// A mark is accepted only for media the classifier hides with a borderline
+// score. The background checks it itself, so the page cannot claim a low
+// score: it re-scores an image, and for a video or GIF it re-scores the
+// thumbnail and samples frames across the whole video.
 async function verifySafeMark(msg, sender) {
-  if (!Number.isInteger(sender?.tab?.id) || !isXPageUrl(sender?.tab?.url || sender?.url || '')) return { ok: false, error: 'Mark images on X.' };
+  if (!Number.isInteger(sender?.tab?.id) || !isXPageUrl(sender?.tab?.url || sender?.url || '')) return { ok: false, error: 'Mark media on X.' };
   const key = msg.key;
-  if (!TabCloserXUserControls.validMedia(key) || typeof msg.url !== 'string') return { ok: false, error: 'This image has no stable identity.' };
+  const noIdentity = { ok: false, error: 'This image or video has no stable identity.' };
+  if (!TabCloserXUserControls.validMedia(key) || typeof msg.url !== 'string') return noIdentity;
   let url;
-  try { url = new URL(msg.url); } catch { return { ok: false, error: 'This image has no stable identity.' }; }
-  if (url.protocol !== 'https:' || url.hostname !== 'pbs.twimg.com' || /_video_thumb\//.test(url.pathname) ||
-      TabCloserXMetadata.normalizeMediaUrl(url.href) !== key.slice(key.indexOf('|') + 1)) {
-    return { ok: false, error: 'Only images can be marked, not videos or GIFs.' };
+  try { url = new URL(msg.url); } catch { return noIdentity; }
+  if (url.protocol !== 'https:' || url.hostname !== 'pbs.twimg.com' ||
+      TabCloserXMetadata.normalizeMediaUrl(url.href) !== key.slice(key.indexOf('|') + 1)) return noIdentity;
+  const isVideo = /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(url.pathname);
+  let videoSource = null;
+  if (isVideo) {
+    try { videoSource = new URL(msg.videoSource); } catch {}
+    if (videoSource?.protocol !== 'https:' || videoSource.hostname !== 'video.twimg.com') {
+      return { ok: false, error: 'Custos could not find this video’s file to check it. Open the post and try again.' };
+    }
   }
   if (!state.xProtection.model.enabled) return { ok: false, error: 'Marks apply to the on-device classifier, which is off.' };
   if (state.xProtection.safeMarksPerDay <= 0) return { ok: false, error: '“Not sensitive” marks are off. Set a daily number in Custos settings.' };
+  const noun = isVideo ? 'video' : 'image';
   const result = await classifyXMedia({ kind: 'url', url: url.href, mediaKey: 'mark|' + key }, sender);
-  if (result.reason !== 'visual') return { ok: false, error: 'Custos could not check this image again. Try later.' };
-  if (result.verdict !== 'protect') return { ok: false, error: 'At your current sensitivity the classifier does not hide this image.' };
-  if (!TabCloserXVerdict.markEligible(result.scores)) return { ok: false, error: 'This detection is too confident to mark as not sensitive.' };
+  if (result.reason !== 'visual') return { ok: false, error: 'Custos could not check this ' + noun + ' again. Try later.' };
+  const tooConfident = { ok: false, error: 'This detection is too confident to mark as not sensitive.' };
+  if (!isVideo) {
+    if (result.verdict !== 'protect') return { ok: false, error: 'At your current sensitivity the classifier does not hide this image.' };
+    return TabCloserXVerdict.markEligible(result.scores) ? { ok: true } : tooConfident;
+  }
+  // A video is hidden by its frames taken together, so every sampled frame
+  // and the thumbnail must be borderline or safe.
+  if (!TabCloserXVerdict.markEligible(result.scores)) return tooConfident;
+  let frames;
+  try {
+    frames = await sampleVideoForMark(videoSource.href);
+  } catch {
+    return { ok: false, error: 'Custos could not check this video again. Try later.' };
+  }
+  const checked = frames.filter(frame => frame?.reason === 'visual');
+  if (checked.length < 3) return { ok: false, error: 'Custos could not check this video again. Try later.' };
+  if (!checked.every(frame => TabCloserXVerdict.markEligible(frame.scores))) {
+    return { ok: false, error: 'Part of this video is too confident a detection to mark as not sensitive.' };
+  }
   return { ok: true };
 }
 
@@ -932,7 +1032,7 @@ async function handleXControlMessage(msg, sender, verified = null) {
   if (msg.type === 'xControlMarkSafe') {
     // Only reachable after verifySafeMark; the flag comes from the listener,
     // never from the message.
-    if (!fromX || verified?.ok !== true) return { ok: false, error: 'Mark images on X.' };
+    if (!fromX || verified?.ok !== true) return { ok: false, error: 'Mark media on X.' };
     const result = TabCloserXUserControls.markSafe(xUserControls, {
       key: msg.key, perDay: state.xProtection.safeMarksPerDay, now: trustedNow(),
     });
@@ -978,6 +1078,22 @@ browser.runtime.onInstalled?.addListener(async () => {
   browser.menus.create({ id: 'tabcloser-hide-text', title: 'Custos: hide this post’s text', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
   browser.menus.create({ id: 'tabcloser-hide-media', title: 'Custos: hide this image / video', contexts: ['all'], documentUrlPatterns: xTabUrlPatterns });
 });
+// Each item only shows when it has something to do: the page reports
+// whether the right-clicked media or post text is already hidden.
+const MANUAL_MENU_IDS = ['tabcloser-hide-text', 'tabcloser-hide-media'];
+browser.menus?.onShown?.addListener(async (info, tab) => {
+  if (!info.menuIds?.some(id => MANUAL_MENU_IDS.includes(id)) || !Number.isInteger(tab?.id)) return;
+  const available = await browser.tabs.sendMessage(tab.id, { type: 'xContextMenuState' }, { frameId: info.frameId || 0 }).catch(() => null);
+  if (!available) return;
+  await Promise.all([
+    browser.menus.update('tabcloser-hide-text', { visible: available.text !== false }),
+    browser.menus.update('tabcloser-hide-media', { visible: available.media !== false }),
+  ]).catch(() => {});
+  browser.menus.refresh?.();
+});
+browser.menus?.onHidden?.addListener(() => {
+  for (const id of MANUAL_MENU_IDS) browser.menus.update(id, { visible: true }).catch(() => {});
+});
 browser.menus?.onClicked.addListener((info, tab) => {
   if (!['tabcloser-hide-text', 'tabcloser-hide-media'].includes(info.menuItemId) || !Number.isInteger(tab?.id)) return;
   browser.tabs.sendMessage(tab.id, {
@@ -1012,10 +1128,8 @@ async function handleMessage(msg, sender) {
       if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('options.html')) return { ok: false, error: 'Open Custos settings to change this protection.' };
       if (typeof msg.enabled !== 'boolean' || (msg.safeSearch != null && typeof msg.safeSearch !== 'boolean')) return { ok: false, error: 'Invalid adult-site setting.' };
       if (!msg.enabled && isLockActive(state.adultSites.lockUntil)) return { ok: false, error: 'Adult-site protection is locked until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
-      // SafeSearch shares the adult-site lock: it can be added, never removed early.
-      if (msg.safeSearch === false && state.adultSites.safeSearch && isLockActive(state.adultSites.lockUntil)) {
-        return { ok: false, error: 'SafeSearch is locked with adult-site protection until ' + new Date(state.adultSites.lockUntil).toLocaleString() + '.' };
-      }
+      // The lock keeps the domain block on. SafeSearch only changes search
+      // pages, so it stays editable during the lock.
       if (msg.enabled && !await loadAdultList()) return { ok: false, error: adultListError };
       state.adultSites.enabled = msg.enabled;
       if (typeof msg.safeSearch === 'boolean') state.adultSites.safeSearch = msg.safeSearch;
@@ -1108,8 +1222,8 @@ async function handleMessage(msg, sender) {
       const modelEnabled = typeof msg.model === 'boolean' ? msg.model : current.model.enabled;
       const labeledEnabled = (typeof msg.labeled === 'boolean' ? msg.labeled : current.labeled.enabled) || modelEnabled;
       if (msg.revealDailySec != null) {
-        if (!Number.isInteger(msg.revealDailySec) || msg.revealDailySec < 0 || msg.revealDailySec > 3600) {
-          return { ok: false, error: 'Choose a daily allowance from 0 to 3600 seconds.' };
+        if (!Number.isInteger(msg.revealDailySec) || msg.revealDailySec < 0 || msg.revealDailySec > TabCloserXUserControls.MAX_DAILY_SEC) {
+          return { ok: false, error: 'Choose a daily allowance from 0 to ' + TabCloserXUserControls.MAX_DAILY_SEC + ' seconds.' };
         }
         if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealDailySec > current.revealDailySec) {
           return { ok: false, error: 'The reveal allowance cannot increase while its allowance lock or X protection lock is active.' };
@@ -1117,7 +1231,7 @@ async function handleMessage(msg, sender) {
       }
       if (msg.revealPerPostSec != null) {
         if (TabCloserXUserControls.postLimitSec(msg.revealPerPostSec) !== msg.revealPerPostSec) {
-          return { ok: false, error: 'Choose 3 to 10 seconds per post.' };
+          return { ok: false, error: 'Choose 3 to ' + TabCloserXUserControls.MAX_POST_SEC + ' seconds per post.' };
         }
         if ((xControlsLocked() || isLockActive(current.revealLockUntil)) && msg.revealPerPostSec > current.revealPerPostSec) {
           return { ok: false, error: 'The time per post cannot increase while its allowance lock or X protection lock is active.' };
@@ -1150,18 +1264,12 @@ async function handleMessage(msg, sender) {
       if (msg.revealDailySec != null) current.revealDailySec = msg.revealDailySec;
       if (msg.revealPerPostSec != null) current.revealPerPostSec = msg.revealPerPostSec;
       if (msg.safeMarksPerDay != null) current.safeMarksPerDay = msg.safeMarksPerDay;
-      // Text replacement, like blocking, and hiding a post's other media are
-      // protections, not presentation: under an X lock they can be turned on
-      // but not off.
-      if (xControlsLocked() && ((current.replaceText && msg.replaceText === false) || (current.blockLike && msg.blockLike === false) ||
-          (current.groupMedia && msg.groupMedia === false))) {
-        return { ok: false, error: 'Text replacement, like blocking, and hiding a post’s other media cannot be turned off while X protection is locked.' };
-      }
+      // How hidden posts are handled (the painting cover, text replacement,
+      // like blocking, hiding a post's other media) stays editable during
+      // every lock: the lock keeps the media itself hidden.
       if (typeof msg.replaceText === 'boolean') current.replaceText = msg.replaceText;
       if (typeof msg.blockLike === 'boolean') current.blockLike = msg.blockLike;
       if (typeof msg.groupMedia === 'boolean') current.groupMedia = msg.groupMedia;
-      // Presentation only: the painting and the blur hide the same media, so
-      // this stays editable during every lock.
       if (typeof msg.sacredArt === 'boolean') current.sacredArt = msg.sacredArt;
       if (modelEnabled) TabCloserClassifier.warmUp();
       await persist();
@@ -1186,14 +1294,9 @@ async function handleMessage(msg, sender) {
         if (!['plain', 'virtue'].includes(msg.alias)) return { ok: false, error: 'Unknown alias style.' };
         change.alias = msg.alias;
       }
-      const next = normalizeXProfile({ ...current, ...change });
-      // Under an X lock profile protection may only tighten. The alias style
-      // is presentation and stays free.
-      if (xControlsLocked() && (PROFILE_IMAGE_RANK[next.images] < PROFILE_IMAGE_RANK[current.images] ||
-          PROFILE_SWITCHES.some(key => current[key] && !next[key]))) {
-        return { ok: false, error: 'Profile protection can only get stricter while X protection is locked.' };
-      }
-      state.xProtection.profile = next;
+      // Profile protection changes how accounts' pictures, names, and replies
+      // are shown, not whether media is hidden, so an X lock leaves it editable.
+      state.xProtection.profile = normalizeXProfile({ ...current, ...change });
       await persist();
       await notifyXProtection();
       return { ok: true };

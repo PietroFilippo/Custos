@@ -12,7 +12,7 @@
 - **Adult websites.** Optional blocking of about 937,000 known pornography domains from a list bundled with the extension, plus optional SafeSearch on Google, Bing, DuckDuckGo, and Brave Search.
 - **X protection.** Hides sensitive images, GIFs, videos, and link-preview images on x.com, using X's own labels and, optionally, a local adult-content classifier. Hidden media is blurred, or covered with a public-domain sacred painting.
 - **Profile protection on X.** Optionally blurs profile pictures and banners, replaces the names of accounts X flags as sensitive with an alias, and folds their replies.
-- **Locks.** Any protection can be locked for an hour, a day, a week, 30 days, or until a date. While locked, a setting can only get stricter.
+- **Locks.** Any protection can be locked for an hour, a day, a week, 30 days, or until a date. While locked, the protection itself can only get stricter; choices about how hidden content is shown stay editable.
 - **Friction, not loopholes.** Brief hold-to-reveal with a small daily allowance, and “Not sensitive” marks for classifier mistakes that only take effect a day later.
 
 ## Install
@@ -42,23 +42,23 @@ Click the toolbar icon for a status summary, and **Open settings** to change any
 - **Block known adult websites** applies immediately to open tabs and to new navigation, including subdomains and embedded frames. Domains are matched at dot boundaries, never by keywords.
 - The bundled [Block List Project pornography list](https://github.com/blocklistproject/Lists) holds **936,977 domains** after validation. Broad mixed-content platforms and public suffixes are removed. Matching happens on your device; there is no DNS service, online lookup, or automatic remote update. Source revision, date, hashes, and exclusions are in `data/adult-list.json`.
 - **Enforce SafeSearch** (needs adult-site blocking) sends Google, Bing, DuckDuckGo, and Brave Search to their strictest filter, image and video search included. Other search engines are not covered.
-- One lock covers both. Expiry unlocks the settings; it does not turn protection off. If the bundled list ever fails to load, navigation is held and the popup shows **Check settings**.
+- The lock keeps blocking on; SafeSearch stays editable during it. Expiry unlocks the setting; it does not turn protection off. If the bundled list ever fails to load, navigation is held and the popup shows **Check settings**.
 
 ### X protection
 
 - **Protection level:** **Off**, **X labels only** (media that X or the poster labelled sensitive; nothing is analysed), or **Labels + on-device classifier** with a **Lenient**, **Balanced** (recommended), or **Strict** sensitivity. **Lock level…** keeps the level and sensitivity from being lowered.
 - The classifier checks images and samples video frames. A successful video check takes priority over a noisy thumbnail; Lenient needs two strong full frames before it hides a video. Media stays covered while it is checked, and media that fails to check stays covered and is retried.
-- **Hidden media** stays in place, heavily blurred and darkened, with a **Sensitive media hidden** notice. The blur scales with the media, so the full-screen viewer is as unreadable as a thumbnail. **Cover hidden media with sacred art** shows a public-domain painting instead; it only changes the look, so it stays editable during any lock. Optional extras: replace the post text with a Catholic quote, prevent liking posts whose media is hidden, and **hide all of a post’s media when one is hidden**.
+- **Hidden media** stays in place, heavily blurred and darkened, with a **Sensitive media hidden** notice. The blur scales with the media, so the full-screen viewer is as unreadable as a thumbnail. **Cover hidden media with sacred art** shows a public-domain painting instead. Optional extras: replace the post text with a Catholic quote, prevent liking posts whose media is hidden, and **hide all of a post’s media when one is hidden**.
 - **Hide all of a post’s media when one is hidden:** in a post with several images or videos, a classifier verdict on one hides the others too (X labels and confirmed video verdicts already hide the whole post). The post’s media stays covered until every item is checked, so a safe image never shows first. A quoted post counts as a separate post. If the item that hid the post is later released, for example by a “Not sensitive” mark, the others are checked again on their own.
 - **Why hidden?** (or clicking blurred media) explains the reason: an X label, the classifier and its score, a manual hide, or a flagged account. Scores are model signals, not certainty.
-- **Temporary reveals** are off by default. Set a daily allowance (for example 30 seconds), then hold **Hold to reveal** in Why hidden?. Each post gets 3 seconds a day by default (3 to 10 configurable), shared across its images and all tabs. Letting go, switching tabs, navigating, or reaching the limit hides it again; videos stay paused and muted. Time is reserved before the reveal and refunded on an early release; a crash can use up the reservation. The allowance resets at local midnight.
-- **“Not sensitive” marks** are for classifier mistakes and are off by default. Choose up to 5 marks a day in settings; Why hidden? then offers **Mark not sensitive…** (two clicks) for an image the classifier hid. To keep this from becoming a shortcut:
-  - a mark takes effect **24 hours later**; the image stays hidden until then;
-  - only borderline detections qualify. Custos re-scores the image itself and refuses confident detections, X labels, manual hides, videos, and GIFs;
-  - a mark covers that one image, never the post or the account;
-  - removing a mark never gives the day's mark back, and any mark can be removed at any time, in Why hidden? or in settings, to hide the image again.
-- **Manual hides:** right-click a post or its media and choose **Custos: hide this post’s text** or **hide this image / video**. Choices are saved on this device and apply even when the level is Off. Remove them under **Manual hides** in settings or in Why hidden?.
-- **Locks:** during an X lock, the level and sensitivity can only go up, text replacement, like blocking, and post-wide hiding stay on, manual hides cannot be removed, profile protection can only tighten, and the reveal allowance, time per post, and daily marks can only go down. **Lock allowance…** applies that last rule on its own, even after the X lock ends. Locking 0 keeps reveals or marks off.
+- **Temporary reveals** are off by default. Set a daily allowance (for example 30 seconds), then hold **Hold to reveal** in Why hidden?. Each post gets 3 seconds a day by default (3 to 5 configurable), within a daily allowance of at most 50 seconds, shared across its images and all tabs. Letting go, switching tabs, navigating, or reaching the limit hides it again; videos stay paused and muted. Time is reserved before the reveal and refunded on an early release; a crash can use up the reservation. The allowance resets at local midnight.
+- **“Not sensitive” marks** are for classifier mistakes and are off by default. Choose up to 5 marks a day in settings; Why hidden? then offers **Mark not sensitive…** (two clicks) for an image, video, or GIF the classifier hid. To keep this from becoming a shortcut:
+  - a mark takes effect **24 hours later**; the media stays hidden until then;
+  - only borderline detections qualify. Custos checks the media itself and refuses confident detections: it re-scores an image, and for a video or GIF it re-scores the thumbnail and samples frames across the whole video (with center crops). X labels and manual hides cannot be marked;
+  - a mark covers that one image or video, never the post or the account. When a video mark takes effect, the verdict that video gave its post is lifted and the post's other media is checked again on its own;
+  - removing a mark never gives the day's mark back, and any mark can be removed at any time, in Why hidden? or in settings, to hide the media again.
+- **Manual hides:** right-click a post or its media and choose **Custos: hide this post’s text** or **hide this image / video**. The menu only offers what is not hidden already: no media item for media that is covered, and no text item for text that is hidden or replaced by a quote. Choices are saved on this device and apply even when the level is Off. Remove them under **Manual hides** in settings or in Why hidden?.
+- **Locks:** during an X lock, the level and sensitivity can only go up, manual hides cannot be removed, and the reveal allowance, time per post, and daily marks can only go down. How hidden posts are handled stays editable, because the media stays hidden either way: the painting cover, text replacement, like blocking, hiding a post’s other media, and all of profile protection. **Lock allowance…** applies that last rule on its own, even after the X lock ends. Locking 0 keeps reveals or marks off.
 
 ### Profile protection on X
 
@@ -68,7 +68,7 @@ Profile pictures are small face crops where the classifier cannot tell a suggest
 - **Replace names and handles** (flagged accounts only): a plain *Hidden account* or a stable Catholic virtue alias such as *Temperance ✝*, in posts, lists, hover cards, mentions, the profile header and top bar, and the tab title. Their @handle, bio, and website are hidden too.
 - **Collapse replies from flagged accounts:** on conversation pages their replies fold into one line. **Show…** opens Why hidden? and uses the same hold-to-reveal allowance.
 
-Profile protection works even when the media level is Off. During an X lock it can only get stricter; the alias style stays editable.
+Profile protection works even when the media level is Off. It stays editable during an X lock: it changes how accounts are shown, not whether media is hidden.
 
 ### Trusted time
 

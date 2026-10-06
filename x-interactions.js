@@ -182,16 +182,21 @@
     updateAllowance(root);
     allowanceTimer = setInterval(() => { if (!lease && !holding && panelRoot === root) updateAllowance(root); }, 1000);
   }
-  // "Not sensitive" marks are offered only for an image the classifier hid.
-  // A mark takes effect a day later and only for borderline detections; the
-  // background re-checks the image before accepting it.
+  // "Not sensitive" marks are offered only for an image, video, or GIF the
+  // classifier hid. A mark takes effect a day later and only for borderline
+  // detections; the background re-checks the media before accepting it.
   function notSensitiveSection(root) {
     if (manuallyHidden(root) || root.dataset.tabcloserMediaReason !== 'visual') return null;
     const decision = TabCloserXCoordinator.decisionFor(root);
     const key = stableMediaVerificationKey(root);
-    const source = sourceValues(root).find(value => value && !value.startsWith('blob:'));
-    if (!key || !source || (decision && decision.source !== 'image') || mediaElementsWithin(root, 'video').length ||
-        !/^https:\/\/pbs\.twimg\.com\//.test(source) || /_video_thumb\//.test(source)) return null;
+    const video = TabCloserXCoordinator.isVideoRoot(root);
+    const noun = video ? 'video' : 'image';
+    const markUrl = mediaElementsWithin(root, 'video').map(item => item.poster).find(Boolean) ||
+      sourceValues(root).find(value => value && !value.startsWith('blob:'));
+    if (!key || !markUrl || !/^https:\/\/pbs\.twimg\.com\//.test(markUrl)) return null;
+    // An image hidden only by its post's video verdict is released through
+    // that video's mark.
+    if (!video && decision && decision.source !== 'image') return null;
     const heading = document.createElement('h4');
     heading.textContent = 'Not sensitive?';
     const status = paragraph('', 'tabcloser-control-note');
@@ -210,11 +215,12 @@
       return section;
     }
     if (!(snapshot.safeMarksPerDay > 0)) {
-      if (snapshot.allowanceLocked) return null;
-      status.textContent = 'If this image is harmless, you can turn on “Not sensitive” marks in Custos settings. A mark takes effect a day later.';
+      status.textContent = snapshot.allowanceLocked
+        ? '“Not sensitive” marks are off, and a lock keeps them off' + (snapshot.allowanceLockUntil ? ' until ' + formatLockDate(snapshot.allowanceLockUntil) : '') + '.'
+        : 'If this ' + noun + ' is harmless, you can turn on “Not sensitive” marks in Custos settings. A mark takes effect a day later.';
       return section;
     }
-    if (decision?.scores && !TabCloserXVerdict.markEligible(decision.scores)) {
+    if (!video && decision?.scores && !TabCloserXVerdict.markEligible(decision.scores)) {
       status.textContent = 'This detection is too confident to mark as not sensitive.';
       return section;
     }
@@ -223,7 +229,7 @@
       status.textContent = 'No “Not sensitive” marks left today.';
       return section;
     }
-    status.textContent = 'If the classifier got this wrong, mark it. The image stays hidden for 24 hours, then shows on this device. ' +
+    status.textContent = 'If the classifier got this wrong, mark it. Custos checks the ' + noun + ' again; it stays hidden for 24 hours, then shows on this device. ' +
       left + ' of ' + snapshot.safeMarksPerDay + ' marks left today.';
     const mark = button('Mark not sensitive…');
     mark.className = 'tabcloser-secondary';
@@ -235,11 +241,13 @@
         return;
       }
       mark.disabled = true;
-      status.textContent = 'Checking the image again…';
-      const result = await send({ type: 'xControlMarkSafe', key, url: source }).catch(() => null);
+      status.textContent = 'Checking the ' + noun + ' again…';
+      // The background samples the video file itself, so it needs its address.
+      const videoSource = video ? await directVideoSourceForRoot(root, false).catch(() => null) : null;
+      const result = await send({ type: 'xControlMarkSafe', key, url: markUrl, videoSource }).catch(() => null);
       if (result?.ok) {
         applySnapshot(result);
-        messagePanel('Marked not sensitive. This image will show from ' + formatLockDate(result.activeAt) +
+        messagePanel('Marked not sensitive. This ' + noun + ' will show from ' + formatLockDate(result.activeAt) +
           '. Undo it in “Why hidden?” or in Custos settings.', 'Custos');
         return;
       }
@@ -303,8 +311,8 @@
     document.querySelectorAll('article[data-tabcloser-collapsed]').forEach(article => {
       if (statusIdFor(article) === lease.postId) mark(article, 'data-tabcloser-collapse-revealed');
     });
-    document.querySelectorAll('.tabcloser-hidden-text, .tabcloser-quote, .tabcloser-manual-text-notice').forEach(node => {
-      if (statusIdFor(node) === lease.postId) mark(node, node.classList.contains('tabcloser-hidden-text') ? 'data-tabcloser-text-revealed' : 'data-tabcloser-quote-revealed');
+    document.querySelectorAll('[data-tabcloser-hidden-text], .tabcloser-quote, .tabcloser-manual-text-notice').forEach(node => {
+      if (statusIdFor(node) === lease.postId) mark(node, node.hasAttribute('data-tabcloser-hidden-text') ? 'data-tabcloser-text-revealed' : 'data-tabcloser-quote-revealed');
     });
   }
   function stopReveal() {
@@ -348,14 +356,14 @@
       if (!text.isConnected || !textHidden(text)) {
         notice.remove(); manualTexts.delete(text);
         delete text.dataset.tabcloserManualText;
-        if (text.dataset.tabcloserQuoted !== 'yes') text.classList.remove('tabcloser-hidden-text');
+        if (text.dataset.tabcloserQuoted !== 'yes') text.removeAttribute('data-tabcloser-hidden-text');
       }
     }
     if (posts.size || texts.size) {
       for (const text of targets.flatMap(target => [...textsWithin(target)])) {
         if (!textHidden(text)) continue;
         text.dataset.tabcloserManualText = '';
-        text.classList.add('tabcloser-hidden-text');
+        text.setAttribute('data-tabcloser-hidden-text', '');
         if (manualTexts.get(text)?.isConnected) continue;
         const notice = document.createElement('div');
         notice.className = 'tabcloser-controls tabcloser-manual-text-notice';
@@ -413,8 +421,7 @@
     if (!changed.size) return;
     document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
       if (!changed.has(stableMediaVerificationKey(root)) || manuallyHidden(root)) return;
-      TabCloserXCoordinator.invalidate(root);
-      discoverRoot(root);
+      TabCloserXCoordinator.recheckForMark(root);
     });
   }
   document.addEventListener('contextmenu', event => {
@@ -426,7 +433,21 @@
   window.addEventListener('blur', stopReveal);
   window.addEventListener('pagehide', stopReveal);
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && panel) { event.preventDefault(); closePanel(); } }, true);
+  // Which manual hides make sense for what was right-clicked: none for media
+  // that is already covered, or for post text that is already hidden or
+  // replaced by a quote.
+  function contextMenuState() {
+    const target = contextTarget?.isConnected ? contextTarget : null;
+    const root = target && mediaRootFor(target);
+    const media = !!root && !!stableMediaVerificationKey(root) && root.dataset.tabcloserMediaState !== 'protected';
+    const article = target?.closest('article');
+    const statusId = target && statusIdFor(target);
+    const texts = article && statusId ? [...article.querySelectorAll('[data-testid="tweetText"]')].filter(text => statusIdFor(text) === statusId) : [];
+    const text = texts.some(item => !textHidden(item) && item.dataset.tabcloserQuoted !== 'yes' && !item.hasAttribute('data-tabcloser-hidden-text'));
+    return { media, text };
+  }
   browser.runtime.onMessage.addListener(message => {
+    if (message?.type === 'xContextMenuState') return Promise.resolve(contextMenuState());
     if (message?.type === 'xControlsChanged') applySnapshot(message.snapshot);
     if (message?.type === 'xManualHideSelection') {
       const target = contextTarget;

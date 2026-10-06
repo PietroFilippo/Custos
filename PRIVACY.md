@@ -17,7 +17,7 @@ This data never leaves your browser. Removing the add-on deletes it.
 
 ## What is processed and then discarded
 
-- **Media on X.** To check an image or a video frame, Custos downloads the image from X's media servers (`pbs.twimg.com`, `video.twimg.com`), the same files the X page shows, without cookies. The on-device model scores it inside the extension. Pixels and scores are kept only in memory, in a short cache of recent results, and are never written to storage or sent anywhere.
+- **Media on X.** To check an image or a video frame, Custos downloads the image from X's media servers (`pbs.twimg.com`, `video.twimg.com`), the same files the X page shows, without cookies. When you mark a video “Not sensitive”, Custos also loads that video file to check frames across it. The on-device model scores it inside the extension. Pixels and scores are kept only in memory, in a short cache of recent results, and are never written to storage or sent anywhere.
 - **X's own responses.** Custos reads the responses X sends to the X page to find X's sensitive-content labels and account flags. It keeps only what it needs (which posts and media are labelled, which accounts X marks as sensitive) in the X tab's memory. Account flags are never saved; reloading X forgets them.
 - **Web addresses.** To apply your site timers and the adult-site block, Custos checks the address of the pages you open against your rules and against a list of adult domains bundled with the extension. Your browsing history is not recorded, and nothing is looked up online.
 - **Server time.** Custos reads the `Date` header of responses your browser already receives. It sends no extra requests for this.

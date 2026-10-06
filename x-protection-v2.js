@@ -253,14 +253,14 @@ function overlayFor(root) {
 // getComputedStyle forces a style recalculation of the page, so each host is
 // measured once when it first gets a cover, not on every redraw.
 function activateOverlayHost(host) {
-  if (host.classList.contains('tabcloser-overlay-host')) return;
-  host.classList.add('tabcloser-overlay-host');
+  if (host.hasAttribute('data-tabcloser-overlay-host')) return;
+  host.setAttribute('data-tabcloser-overlay-host', '');
   const position = getComputedStyle(host).position;
-  if (!position || position === 'static') host.classList.add('tabcloser-overlay-host-static');
+  if (!position || position === 'static') host.setAttribute('data-tabcloser-overlay-host', 'static');
 }
 
 function clearOverlayHost(host) {
-  host.classList.remove('tabcloser-overlay-host', 'tabcloser-overlay-host-static');
+  host.removeAttribute('data-tabcloser-overlay-host');
 }
 
 // CSS blur radii are absolute: a radius that erases a timeline thumbnail
@@ -538,7 +538,7 @@ function applyQuoteFor(root) {
   const quote = quoteForKey(statusId || text.textContent.slice(0, 40));
   if (!quote) return;
   text.dataset.tabcloserQuoted = 'yes';
-  text.classList.add('tabcloser-hidden-text');
+  text.setAttribute('data-tabcloser-hidden-text', '');
   const block = document.createElement('div');
   block.className = 'tabcloser-quote';
   // X sets its font on the text element itself, not its container; without
@@ -560,7 +560,7 @@ function restoreLayerText(article, layer) {
   for (const text of article.querySelectorAll('[data-testid="tweetText"][data-tabcloser-quoted]')) {
     if (tweetLayerFor(text, article) !== layer) continue;
     delete text.dataset.tabcloserQuoted;
-    if (!text.hasAttribute('data-tabcloser-manual-text')) text.classList.remove('tabcloser-hidden-text');
+    if (!text.hasAttribute('data-tabcloser-manual-text')) text.removeAttribute('data-tabcloser-hidden-text');
     if (text.nextElementSibling?.classList.contains('tabcloser-quote')) text.nextElementSibling.remove();
   }
 }
@@ -569,7 +569,7 @@ function restoreAllArticleText() {
   document.querySelectorAll('.tabcloser-quote').forEach(quote => quote.remove());
   document.querySelectorAll('[data-tabcloser-quoted]').forEach(text => {
     delete text.dataset.tabcloserQuoted;
-    if (!text.hasAttribute('data-tabcloser-manual-text')) text.classList.remove('tabcloser-hidden-text');
+    if (!text.hasAttribute('data-tabcloser-manual-text')) text.removeAttribute('data-tabcloser-hidden-text');
   });
 }
 
@@ -703,7 +703,7 @@ function clearAllStates() {
   closeLightbox();
   restoreAllArticleText();
   document.querySelectorAll('.tabcloser-media-overlay').forEach(overlay => overlay.remove());
-  document.querySelectorAll('.tabcloser-overlay-host').forEach(clearOverlayHost);
+  document.querySelectorAll('[data-tabcloser-overlay-host]').forEach(clearOverlayHost);
   document.querySelectorAll('[data-tabcloser-like-blocked]').forEach(article => article.removeAttribute('data-tabcloser-like-blocked'));
   document.querySelectorAll('[data-tabcloser-media-state]').forEach(root => {
     restoreRootPlayback(root);
@@ -1297,7 +1297,11 @@ async function classifyRoot(root, fingerprint, token) {
       protectGroup(root, 'metadata');
       return;
     }
-    if (visualVerdictProtects(root)) {
+    // Media the user marked "Not sensitive" (once its day-long wait has
+    // passed) is released despite a classifier verdict, including the verdict
+    // a video gave its whole post. X labels and manual hides still win.
+    const marked = !!globalThis.TabCloserXInteractions?.markedNotSensitive?.(root);
+    if (!marked && visualVerdictProtects(root)) {
       protectGroup(root, 'visual');
       return;
     }
@@ -1310,10 +1314,7 @@ async function classifyRoot(root, fingerprint, token) {
     // GIFs are videos too: timeline quote cards show only their tweet_video_thumb
     // image, and a noisy thumbnail must be overrulable by the GIF's frames.
     const isVideo = videos.length > 0 || images.some(image => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(image.src));
-    // An image the user marked "Not sensitive" (once its day-long wait has
-    // passed) is released despite a classifier verdict. X labels and manual
-    // hides still win: they are checked before and after this point.
-    const markedSafe = !isVideo && !!globalThis.TabCloserXInteractions?.markedNotSensitive?.(root);
+    const markedSafe = !isVideo && marked;
     let releasedByMark = false;
     let thumbnailVerdict = null;
     let videoUnavailableReason = '';
@@ -1345,14 +1346,16 @@ async function classifyRoot(root, fingerprint, token) {
       protectGroup(root, 'metadata');
       return;
     }
-    for (const video of videos) {
+    // A marked video or GIF is not sampled again: the background already
+    // checked its frames when the mark was made.
+    for (const video of marked ? [] : videos) {
       const result = await classifyVideoPoster(video, fingerprint, isActive);
       ensureClassificationActive(isActive);
       if (result.verdict !== 'safe') {
         thumbnailVerdict = result;
       }
     }
-    const directVideoSource = isVideo && (videos.length > 0 || thumbnailVerdict)
+    const directVideoSource = !marked && isVideo && (videos.length > 0 || thumbnailVerdict)
       ? await directVideoSourceForRoot(root, true)
       : null;
     ensureClassificationActive(isActive);
@@ -1398,6 +1401,10 @@ async function classifyRoot(root, fingerprint, token) {
       if (result.reason === 'visual' && result.samplesChecked >= 3) thumbnailVerdict = null;
       else videoUnavailableReason = result.probeError || 'Video check incomplete';
     }
+    if (isVideo && marked) {
+      releasedByMark = true;
+      thumbnailVerdict = null;
+    }
     if (thumbnailVerdict) {
       recordDecision({ ...thumbnailVerdict, fallback: directVideoSource ? 'Video check unavailable: ' + videoUnavailableReason : 'No direct video source available' }, 'video thumbnail');
       protectUnsafeResult(root, 'visual');
@@ -1417,7 +1424,7 @@ async function classifyRoot(root, fingerprint, token) {
       protectGroup(root, root.dataset.tabcloserMediaReason || 'metadata');
       return;
     }
-    if (visualVerdictProtects(root)) {
+    if (!marked && visualVerdictProtects(root)) {
       protectGroup(root, 'visual');
       return;
     }
@@ -1496,7 +1503,7 @@ function discoverRoot(root) {
     protectGroup(root, 'metadata');
     return;
   }
-  if (visualVerdictProtects(root)) {
+  if (visualVerdictProtects(root) && !globalThis.TabCloserXInteractions?.markedNotSensitive?.(root)) {
     if (videoDecisionsByTweetId.has(statusIdFor(root))) rootDecisions.set(root, videoDecisionsByTweetId.get(statusIdFor(root)));
     if (root.dataset.tabcloserMediaState !== 'protected') {
       xMetadataDebug('session-verdict-applied', { statusId: statusIdFor(root) });
@@ -1758,9 +1765,9 @@ function blockPendingOrProtectedActivation(event) {
       return;
     }
   }
-  // .tabcloser-overlay-host guards the full clickable cell, which extends
+  // [data-tabcloser-overlay-host] guards the full clickable cell, which extends
   // beyond the media root that carries the state attribute.
-  const root = event.target.closest('[data-tabcloser-media-state="pending"], [data-tabcloser-media-state="protected"], .tabcloser-overlay-host');
+  const root = event.target.closest('[data-tabcloser-media-state="pending"], [data-tabcloser-media-state="protected"], [data-tabcloser-overlay-host]');
   if (!root) return;
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -1835,9 +1842,36 @@ new MutationObserver(mutations => {
   attributeFilter: ['src', 'srcset', 'poster', 'href'],
 });
 
+function isVideoRoot(root) {
+  return mediaElementsWithin(root, 'video').length > 0 || sourceValues(root).some(value => /\/(?:amplify|ext_tw|tweet)_video_thumb\//.test(value || ''));
+}
+
+// When a mark takes effect or is removed, its media is checked again. A video
+// mark also lifts the verdict that video gave its whole post, so every media
+// item of the post is checked again on its own.
+function recheckForMark(root) {
+  const tweetId = statusIdFor(root);
+  const video = isVideoRoot(root);
+  if (video && tweetId) {
+    visuallyProtectedTweetIds.delete(tweetId);
+    videoDecisionsByTweetId.delete(tweetId);
+  }
+  const roots = video && tweetId
+    ? [...document.querySelectorAll('[data-tabcloser-media-state]')].filter(other => statusIdFor(other) === tweetId)
+    : [root];
+  for (const other of roots) {
+    if (globalThis.TabCloserXInteractions?.manuallyHidden(other)) continue;
+    const record = rootRecords.get(other);
+    if (record) record.status = 'stale';
+    discoverRoot(other);
+  }
+}
+
 globalThis.TabCloserXCoordinator = {
   decisionFor: root => rootDecisions.get(root),
   invalidate(root) { const record = rootRecords.get(root); if (record) record.status = 'stale'; },
+  isVideoRoot,
+  recheckForMark,
 };
 
 browser.storage.local.get('xProtection')
