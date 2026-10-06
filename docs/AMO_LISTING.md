@@ -5,9 +5,9 @@ Copy for the Custos listing and the notes for Mozilla's reviewers. Keep it in st
 ## Basics
 
 - **Name:** Custos
-- **Slug:** `custos` (free as of 5 October 2026)
+- **Slug:** `custos`. Submitted on 6 October 2026 through the API (`web-ext sign --channel listed --amo-metadata`), version 0.5.0 from tag `v0.5.0`. The privacy policy and the first screenshot were added through the AMO API; the API allows roughly one screenshot upload per hour, so add the others in the Developer Hub (Edit Product Page → Media).
 - **Categories:** Privacy & Security; Social & Communication
-- **Tags:** productivity, social media, parental control
+- **Tags:** content blocker, privacy, social media, twitter (AMO accepts only tags from its fixed list)
 - **Compatibility:** Firefox (desktop) only. Leave **Firefox for Android** unchecked: Custos relies on the context menu and window-focus APIs, which Android lacks. The `gecko_android` key in the manifest exists only to keep `web-ext lint` quiet about `data_collection_permissions`.
 - **License:** MIT
 - **Homepage:** <https://github.com/PietroFilippo/Custos>
