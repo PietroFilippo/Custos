@@ -68,10 +68,12 @@
 
 /* The overlay is appended to the full clickable cell (photo/video link when
    present, media root otherwise) so inset: 0 covers everything tappable. */
-.tabcloser-overlay-host {
+/* Data attributes, not classes, on X's own elements: React rewrites the
+   class attribute when it re-renders (for example on hover). */
+[data-tabcloser-overlay-host] {
   overflow: hidden !important;
 }
-.tabcloser-overlay-host-static {
+[data-tabcloser-overlay-host="static"] {
   min-height: 96px !important;
   position: relative !important;
 }
@@ -219,7 +221,7 @@
 }
 
 /* Censored-post text replacement. */
-.tabcloser-hidden-text {
+[data-tabcloser-hidden-text] {
   display: none !important;
 }
 /* Fallback font stack: the inline font copied from X's own text wins. */
@@ -324,7 +326,7 @@ html[data-tabcloser-block-like] article[data-tabcloser-like-blocked] [data-testi
    by x-profile-protection.js; larger pictures get a stronger radius. */
 a[href$="/photo"] { --tabcloser-avatar-blur: 16px; }
 [aria-modal="true"] { --tabcloser-avatar-blur: 40px; }
-.tabcloser-name-hidden, .tabcloser-handle-hidden, .tabcloser-bio-hidden { display: none !important; }
+[data-tabcloser-hide] { display: none !important; }
 .tabcloser-bio-notice { color: var(--tabcloser-muted) !important; font-size: 14px !important; font-style: italic !important; margin: 8px 0 !important; }
 .tabcloser-alias { white-space: nowrap !important; }
 article[data-tabcloser-collapsed]:not([data-tabcloser-collapse-revealed]) > :not(.tabcloser-collapsed-reply),
@@ -357,7 +359,7 @@ article[data-tabcloser-collapse-revealed] > .tabcloser-collapsed-reply {
   transform: none !important;
 }
 [data-tabcloser-overlay-revealed], [data-tabcloser-quote-revealed] { visibility: hidden !important; pointer-events: none !important; }
-.tabcloser-hidden-text[data-tabcloser-text-revealed] { display: block !important; }
+[data-tabcloser-hidden-text][data-tabcloser-text-revealed] { display: block !important; }
 [data-tabcloser-revealed], [data-tabcloser-text-revealed], [data-tabcloser-collapse-revealed] {
   animation: tabcloser-peek-window var(--tabcloser-peek-ms) step-end forwards !important;
 }

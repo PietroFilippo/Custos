@@ -130,8 +130,9 @@ async function startCoordinator(html, {
     debugMessages,
     async sendContentMessage(message) {
       assert.ok(contentMessageListeners.length, 'content-script message listener was not registered');
-      for (const listener of contentMessageListeners) listener(message);
+      const results = contentMessageListeners.map(listener => listener(message));
       await flush(window);
+      return Promise.all(results);
     },
     window,
   };
@@ -157,7 +158,7 @@ test('a native X mature-content warning tile is replaced and cannot open the pos
     assert.equal(tile.dataset.tabcloserMediaReason, 'metadata');
     assert.ok(tile.querySelector('.tabcloser-media-overlay-art'), 'warning tile should show replacement art');
     assert.ok(tile.querySelector('.tabcloser-overlay-artwork'), 'the full painting should render above its fill backdrop');
-    assert.ok(tile.classList.contains('tabcloser-overlay-host-static'), 'a genuinely static host needs the positioning fallback');
+    assert.ok(tile.getAttribute('data-tabcloser-overlay-host') === 'static', 'a genuinely static host needs the positioning fallback');
 
     const click = new harness.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
     assert.equal(tile.dispatchEvent(click), false, 'protected warning tile navigation must be canceled');
@@ -507,7 +508,7 @@ test('outer tweet metadata does not censor a safe quoted tweet in the same artic
     assert.equal(outer.dataset.tabcloserMediaState, 'protected');
     assert.equal(quoted.dataset.tabcloserMediaState, 'safe', 'nested quoted media belongs to a separate tweet layer');
     assert.equal(quotedText.dataset.tabcloserQuoted, undefined);
-    assert.equal(quotedText.classList.contains('tabcloser-hidden-text'), false);
+    assert.equal(quotedText.hasAttribute('data-tabcloser-hidden-text'), false);
     assert.equal(harness.window.document.querySelector('.tabcloser-quote'), null);
   } finally {
     harness.dom.window.close();
@@ -655,8 +656,8 @@ test('an absolutely positioned X grid anchor keeps its positioning', async () =>
 
   try {
     const tile = harness.window.document.getElementById('absolute-tile');
-    assert.ok(tile.classList.contains('tabcloser-overlay-host'));
-    assert.equal(tile.classList.contains('tabcloser-overlay-host-static'), false);
+    assert.ok(tile.hasAttribute('data-tabcloser-overlay-host'));
+    assert.equal(tile.getAttribute('data-tabcloser-overlay-host') === 'static', false);
     assert.equal(harness.window.getComputedStyle(tile).position, 'absolute');
   } finally {
     harness.dom.window.close();
@@ -1148,7 +1149,7 @@ test('post text is replaced when the media viewer lives outside the tweet articl
     const article = harness.window.document.getElementById('detail-article');
     const text = article.querySelector('[data-testid="tweetText"]');
     assert.equal(text.dataset.tabcloserQuoted, 'yes', 'the article located by status ID must have its text replaced');
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     assert.ok(article.querySelector('.tabcloser-quote'), 'a quote must replace the post text');
   } finally {
     harness.dom.window.close();
@@ -1259,7 +1260,7 @@ test('legacy post hides cover content only and isolate quoted posts', async () =
   });
   try {
     assert.equal(h.window.document.getElementById('quoted').dataset.tabcloserMediaState, undefined);
-    assert.ok(h.window.document.querySelector('#quoted [data-testid="tweetText"]').classList.contains('tabcloser-hidden-text'));
+    assert.ok(h.window.document.querySelector('#quoted [data-testid="tweetText"]').hasAttribute('data-tabcloser-hidden-text'));
     assert.ok(h.window.document.querySelector('#quoted .tabcloser-manual-text-notice'));
     assert.equal(h.window.document.getElementById('outer').dataset.tabcloserMediaState, undefined);
   } finally { h.dom.window.close(); }
@@ -1769,7 +1770,7 @@ test('manual text is independent of media and remains hidden across protection c
   });
   try {
     let text=h.window.document.querySelector('[data-testid="tweetText"]');
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     assert.equal(h.window.document.getElementById('controlled-image').dataset.tabcloserMediaState,undefined);
     assert.equal(h.window.document.querySelector('article').dataset.tabcloserMediaState,undefined);
     h.window.document.querySelector('.tabcloser-manual-text-notice button').click();
@@ -1782,13 +1783,13 @@ test('manual text is independent of media and remains hidden across protection c
     await flush(h.window,3);
     assert.equal(text.hasAttribute('data-tabcloser-text-revealed'),false);
     await h.sendContentMessage({type:'xProtectionChanged',xProtection:{}});
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     h.window.document.body.innerHTML=controlFixture;
     await flush(h.window,60);
     text=h.window.document.querySelector('[data-testid="tweetText"]');
-    assert.ok(text.classList.contains('tabcloser-hidden-text'));
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'));
     await h.sendContentMessage({type:'xControlsChanged',snapshot:{posts:[],texts:[],media:[]}});
-    assert.equal(text.classList.contains('tabcloser-hidden-text'),false);
+    assert.equal(text.hasAttribute('data-tabcloser-hidden-text'),false);
     assert.equal(h.window.document.querySelector('.tabcloser-manual-text-notice'),null);
   } finally { h.dom.window.close(); }
 });
@@ -1892,7 +1893,7 @@ test('a quoted GIF thumbnail is a video thumbnail: its frames can release a fals
     await flush(h.window, 24);
     assert.equal(thumb.dataset.tabcloserMediaState, 'safe', 'safe GIF frames overrule the thumbnail, as in the detail view');
     assert.ok(h.classificationMessages.some(message => message.kind === 'frame'));
-    assert.equal(h.window.document.querySelector('#quote-card [data-testid="tweetText"]').classList.contains('tabcloser-hidden-text'), false);
+    assert.equal(h.window.document.querySelector('#quote-card [data-testid="tweetText"]').hasAttribute('data-tabcloser-hidden-text'), false);
   } finally { h.dom.window.close(); }
 });
 
@@ -2023,10 +2024,10 @@ test('a manual text hide follows a post into a reused element', async () => {
     controlMessage: () => ({ ok: true, posts: [], texts: ['999'], media: [], revealDailySec: 0 }) });
   try {
     const text = h.window.document.querySelector('[data-testid="tweetText"]');
-    assert.equal(text.classList.contains('tabcloser-hidden-text'), false);
+    assert.equal(text.hasAttribute('data-tabcloser-hidden-text'), false);
     for (const link of h.window.document.querySelectorAll('a[href*="/status/123"]')) link.setAttribute('href', link.getAttribute('href').replace('123', '999'));
     await new Promise(resolve => h.window.setTimeout(resolve, 120));
-    assert.ok(text.classList.contains('tabcloser-hidden-text'), 'X reused the element for the hidden post');
+    assert.ok(text.hasAttribute('data-tabcloser-hidden-text'), 'X reused the element for the hidden post');
   } finally { h.dom.window.close(); }
 });
 
@@ -2130,9 +2131,11 @@ test('“Not sensitive” marks are not offered for confident detections, X labe
     assert.equal(text.includes('Mark not sensitive'), false);
   } finally { confident.dom.window.close(); }
   const offLocked = await startCoordinator(controlFixture, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
-    controlMessage: () => ({ ...allowed, safeMarksPerDay: 0, safeMarksLeft: 0, allowanceLocked: true }) });
+    controlMessage: () => ({ ...allowed, safeMarksPerDay: 0, safeMarksLeft: 0, allowanceLocked: true, allowanceLockUntil: Date.now() + 86400000 }) });
   try {
-    assert.equal((await panelText(offLocked)).includes('Not sensitive?'), false, 'no nudge toward a setting that is locked');
+    const text = await panelText(offLocked);
+    assert.match(text, /marks are off, and a lock keeps them off until/, 'explains why marking is unavailable');
+    assert.equal(text.includes('Mark not sensitive'), false);
   } finally { offLocked.dom.window.close(); }
   const labelled = await startCoordinator(controlFixture.replace('<img src=', '<span>Warning: Nudity</span><img src='), {
     interactions: true, prepare: withCommon, controlMessage: () => allowed, classify: () => borderlineVerdict });
@@ -2209,5 +2212,72 @@ test('when the photo that hid its post is marked not sensitive, the others are c
     assert.equal(state('photo-a').tabcloserMediaState, 'safe');
     assert.equal(state('photo-a').tabcloserMediaReason, 'marked');
     assert.equal(state('photo-b').tabcloserMediaState, 'safe', 'the sibling is released after its own check');
+  } finally { h.dom.window.close(); }
+});
+
+test('a video hidden by the classifier can be marked, is released once the mark takes effect, and is covered again on removal', async () => {
+  const posterUrl = 'https://pbs.twimg.com/amplify_video_thumb/400/img/poster.jpg';
+  const key = '400|' + posterUrl;
+  const source = 'https://video.twimg.com/amplify_video/400/vid/a.mp4';
+  const html = '<article><a href="/example/status/400"><time>1h</time></a><div data-testid="tweetText">Clip</div>' +
+    '<a href="/example/status/400/video/1"><div id="video-root" data-testid="videoComponent"><video poster="' + posterUrl + '" src="blob:https://x.com/v"></video></div></a></article>';
+  const messages = [];
+  const controls = { ok: true, posts: [], media: [], revealDailySec: 0, safeMarks: [], safeMarksPerDay: 2, safeMarksLeft: 2 };
+  const h = await startCoordinator(html, { interactions: true, prepare: withCommon, classify: () => borderlineVerdict,
+    controlMessage(message) {
+      messages.push(message);
+      if (message.type !== 'xControlMarkSafe') return controls;
+      return { ...controls, activeAt: Date.now() + 86400000, safeMarks: [{ key, active: false, activeAt: Date.now() + 86400000 }] };
+    } });
+  const root = () => h.window.document.getElementById('video-root');
+  const findButton = label => [...h.window.document.querySelectorAll('button')].find(b => b.textContent === label);
+  try {
+    await flush(h.window, 12);
+    assert.equal(root().dataset.tabcloserMediaState, 'protected');
+    assert.equal(root().dataset.tabcloserMediaReason, 'visual');
+    await h.sendContentMessage({ type: 'xSensitiveMediaMetadata', metadata: { urls: [], tweetIds: [], videoSourcesByPoster: { [posterUrl]: { url: source } } } });
+    root().closest('a').querySelector('.tabcloser-media-actions button').click();
+    await flush(h.window, 3);
+    assert.match(h.window.document.querySelector('.tabcloser-control-panel').textContent, /Custos checks the video again/);
+    const markButton = findButton('Mark not sensitive…');
+    markButton.click();
+    markButton.click();
+    await flush(h.window, 6);
+    const sent = messages.find(message => message.type === 'xControlMarkSafe');
+    assert.equal(sent.key, key);
+    assert.equal(sent.url, posterUrl);
+    assert.equal(sent.videoSource, source, 'the background gets the video file to sample');
+    assert.equal(root().dataset.tabcloserMediaState, 'protected', 'a pending mark keeps the video hidden');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [{ key, active: true, activeAt: 1 }] } });
+    await flush(h.window, 12);
+    assert.equal(root().dataset.tabcloserMediaState, 'safe', 'an active mark releases the video');
+    assert.equal(root().dataset.tabcloserMediaReason, 'marked');
+    await h.sendContentMessage({ type: 'xControlsChanged', snapshot: { ...controls, safeMarks: [] } });
+    await flush(h.window, 12);
+    // The video is checked again (its frames now, since its file is known);
+    // it stays covered while that check runs.
+    assert.notEqual(root().dataset.tabcloserMediaState, 'safe', 'removing the mark covers it again');
+    assert.ok(root().closest('a').querySelector('.tabcloser-media-overlay'));
+  } finally { h.dom.window.close(); }
+});
+
+test('the right-click hide items only show when the media or text is not already hidden', async () => {
+  const html = '<article><a href="/example/status/600"><time>1h</time></a><div id="text" data-testid="tweetText">Hello</div>' +
+    '<a href="/example/status/600/photo/1"><div id="hidden-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/hidden.jpg"></div></a>' +
+    '<a href="/example/status/600/photo/2"><div id="safe-photo" data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/safe.jpg"></div></a></article>';
+  const h = await startCoordinator(html, { interactions: true,
+    classify: message => message.url?.includes('hidden') ? borderlineVerdict : { verdict: 'safe', reason: 'visual' } });
+  const stateFor = async id => {
+    h.window.document.getElementById(id).dispatchEvent(new h.window.MouseEvent('contextmenu', { bubbles: true }));
+    const [state] = (await h.sendContentMessage({ type: 'xContextMenuState' })).filter(Boolean);
+    return JSON.parse(JSON.stringify(state)); // a plain object from the page's realm
+  };
+  try {
+    await flush(h.window, 12);
+    assert.deepEqual(await stateFor('hidden-photo'), { media: false, text: true }, 'covered media offers no media hide');
+    assert.deepEqual(await stateFor('safe-photo'), { media: true, text: true });
+    assert.deepEqual(await stateFor('text'), { media: false, text: true }, 'no media hide on text');
+    h.window.document.getElementById('text').dataset.tabcloserQuoted = 'yes';
+    assert.deepEqual(await stateFor('safe-photo'), { media: true, text: false }, 'text replaced by a quote offers no text hide');
   } finally { h.dom.window.close(); }
 });
