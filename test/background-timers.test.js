@@ -380,23 +380,32 @@ test('SafeSearch rewrites search engines to their strict filter and shares the a
   assert.equal((await request('https://www.google.com/search?q=test')).redirectUrl, 'https://www.google.com/search?q=test&safe=active');
 });
 
-test('time per post is 3-10 s, reaches the ledger, and may only go down while locked', async () => {
+test('time per post is 3-5 s and the daily allowance at most 50 s; both reach the ledger and only go down while locked', async () => {
   const h = await start({ xProtection: { revealDailySec: 30 } });
   const sender = { tab: { id: 1, url: 'https://x.com/home' } };
   assert.equal((await h.state()).xProtection.revealPerPostSec, 3, 'defaults to 3 s');
-  for (const invalid of [2, 11, 4.5, '7']) {
+  for (const invalid of [2, 6, 10, 4.5, '4']) {
     assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: invalid }, settingsSender)).ok, false, String(invalid));
   }
-  assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: 8 }, settingsSender)).ok, true);
+  for (const invalid of [51, 3600, -1, 2.5]) {
+    assert.equal((await h.send({ type: 'saveXProtection', revealDailySec: invalid }, settingsSender)).ok, false, String(invalid));
+  }
+  assert.equal((await h.send({ type: 'saveXProtection', revealDailySec: 50 }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: 5 }, settingsSender)).ok, true);
   const reveal = await h.send({ type: 'xControlRevealStart', postId: '123' }, sender);
-  assert.equal(reveal.durationMs, 8000, 'the background caps reveals with the configured time');
-  assert.equal((await h.send({ type: 'xControlGet', postId: '456' }, sender)).revealPerPostSec, 8);
+  assert.equal(reveal.durationMs, 5000, 'the background caps reveals with the configured time');
+  assert.equal((await h.send({ type: 'xControlGet', postId: '456' }, sender)).revealPerPostSec, 5);
   assert.equal((await h.send({ type: 'lockXReveal', durationSec: 120 }, settingsSender)).ok, true);
-  assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: 10 }, settingsSender)).ok, false, 'no increase under the allowance lock');
-  assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: 5 }, settingsSender)).ok, true, 'decreasing is allowed');
-  const xLocked = await start({ xProtection: { revealDailySec: 30, revealPerPostSec: 6, labeled: { enabled: true, lockUntil: 900000 } } });
-  assert.equal((await xLocked.state()).xProtection.revealPerPostSec, 6, 'a saved value survives restart');
-  assert.equal((await xLocked.send({ type: 'saveXProtection', revealPerPostSec: 7 }, settingsSender)).ok, false, 'no increase under an X lock');
+  assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: 4 }, settingsSender)).ok, true, 'decreasing is allowed');
+  assert.equal((await h.send({ type: 'saveXProtection', revealPerPostSec: 5 }, settingsSender)).ok, false, 'no increase under the allowance lock');
+  assert.equal((await h.send({ type: 'saveXProtection', revealDailySec: 20 }, settingsSender)).ok, true);
+  assert.equal((await h.send({ type: 'saveXProtection', revealDailySec: 21 }, settingsSender)).ok, false);
+  const xLocked = await start({ xProtection: { revealDailySec: 30, revealPerPostSec: 4, labeled: { enabled: true, lockUntil: 900000 } } });
+  assert.equal((await xLocked.state()).xProtection.revealPerPostSec, 4, 'a saved value survives restart');
+  assert.equal((await xLocked.send({ type: 'saveXProtection', revealPerPostSec: 5 }, settingsSender)).ok, false, 'no increase under an X lock');
+  const legacy = await start({ xProtection: { revealDailySec: 600, revealPerPostSec: 8 } });
+  assert.equal((await legacy.state()).xProtection.revealDailySec, 50, 'older, larger allowances are lowered to the new maximum');
+  assert.equal((await legacy.state()).xProtection.revealPerPostSec, 5);
 });
 
 const xSender = { tab: { id: 1, url: 'https://x.com/home' } };

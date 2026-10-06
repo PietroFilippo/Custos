@@ -5,11 +5,14 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.TabCloserXUserControls = api;
 })(globalThis, function() {
-  // Per-post daily reveal time: 3 s by default, configurable from 3 to 10 s.
+  // Per-post daily reveal time: 3 s by default, configurable from 3 to 5 s,
+  // within a daily allowance of at most 50 s. Older versions allowed up to
+  // 10 s per post; such saved values are lowered to 5 s, never reset.
   const POST_LIMIT_MS = 3000;
   const MIN_POST_SEC = 3;
-  const MAX_POST_SEC = 10;
-  const postLimitSec = value => (Number.isInteger(value) && value >= MIN_POST_SEC && value <= MAX_POST_SEC ? value : POST_LIMIT_MS / 1000);
+  const MAX_POST_SEC = 5;
+  const MAX_DAILY_SEC = 50;
+  const postLimitSec = value => (Number.isInteger(value) && value >= MIN_POST_SEC && value <= 10 ? Math.min(value, MAX_POST_SEC) : POST_LIMIT_MS / 1000);
   // A "Not sensitive" mark takes effect a day after it is made, so it fixes a
   // false positive without offering anything in the moment.
   const SAFE_MARK_DELAY_MS = 24 * 60 * 60 * 1000;
@@ -119,7 +122,7 @@
     return pending.length ? Math.min(...pending) : null;
   }
   return {
-    normalize, validPost, validMedia, remaining, begin, end, postLimitSec, POST_LIMIT_MS, MIN_POST_SEC, MAX_POST_SEC,
+    normalize, validPost, validMedia, remaining, begin, end, postLimitSec, POST_LIMIT_MS, MIN_POST_SEC, MAX_POST_SEC, MAX_DAILY_SEC,
     safeMarksPerDay, marksLeft, markSafe, safeMarkList, nextSafeActivation, SAFE_MARK_DELAY_MS, MAX_SAFE_MARKS_PER_DAY,
   };
 });
